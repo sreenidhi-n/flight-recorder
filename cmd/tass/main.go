@@ -17,8 +17,10 @@ func main() {
 	case "--version", "-v", "version":
 		fmt.Printf("tass %s\n", version)
 	case "init":
-		fmt.Fprintln(os.Stderr, "tass init: not yet implemented")
-		os.Exit(1)
+		if err := runInit(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	case "scan":
 		fmt.Fprintln(os.Stderr, "tass scan: not yet implemented")
 		os.Exit(1)
