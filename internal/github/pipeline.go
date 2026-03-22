@@ -197,7 +197,9 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 	scanResult := storage.ScanResult{
 		ID:             scanID,
 		RepoID:         req.RepoID,
+		InstallationID: req.InstallationID,
 		PRNumber:       req.PRNumber,
+		HeadBranch:     req.HeadBranch,
 		CommitSHA:      req.HeadSHA,
 		BaseSHA:        req.BaseSHA,
 		ScannedAt:      time.Now().UTC(),

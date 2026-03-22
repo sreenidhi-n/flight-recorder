@@ -10,6 +10,12 @@ import (
 	"path/filepath"
 )
 
+// FileInfo holds raw file content and its blob SHA (needed for PUT to update).
+type FileInfo struct {
+	Content []byte
+	SHA     string // blob SHA — required by GitHub API when updating an existing file
+}
+
 // PRFile is one entry from GET /repos/{owner}/{repo}/pulls/{pr}/files.
 type PRFile struct {
 	Filename string `json:"filename"`
@@ -39,6 +45,54 @@ func (a *App) FetchChangedFiles(ctx context.Context, token, owner, repo string, 
 		}
 	}
 	return all, nil
+}
+
+// FetchFile fetches a file's content AND its blob SHA from the GitHub API.
+// The SHA is required when committing an update to an existing file.
+// Returns nil, nil if the file does not exist at that ref.
+func (a *App) FetchFile(ctx context.Context, token, owner, repo, path, ref string) (*FileInfo, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s?ref=%s",
+		githubAPIBase, owner, repo, path, ref)
+
+	var result struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+		SHA      string `json:"sha"`
+		Message  string `json:"message"`
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetch file: build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch file %s@%s: %w", path, ref, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch file %s@%s: status %d: %s", path, ref, resp.StatusCode, string(body))
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("fetch file %s: parse response: %w", path, err)
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(stripNewlines(result.Content))
+	if err != nil {
+		return nil, fmt.Errorf("fetch file %s: base64 decode: %w", path, err)
+	}
+	return &FileInfo{Content: decoded, SHA: result.SHA}, nil
 }
 
 // FetchFileContent fetches a single file's raw content from the GitHub API

@@ -16,14 +16,22 @@ import (
 	"github.com/tass-security/tass/internal/storage"
 )
 
-// --- minimal in-memory store for handler tests ---
+// --- minimal in-memory store for handler + verifier tests ---
 
 type memStore struct {
 	installations map[int64]storage.Installation
+	repositories  map[int64]storage.Repository
+	scans         map[string]storage.ScanResult
+	decisions     map[string][]storage.VerificationDecision // scan_id → []decision
 }
 
 func newMemStore() *memStore {
-	return &memStore{installations: make(map[int64]storage.Installation)}
+	return &memStore{
+		installations: make(map[int64]storage.Installation),
+		repositories:  make(map[int64]storage.Repository),
+		scans:         make(map[string]storage.ScanResult),
+		decisions:     make(map[string][]storage.VerificationDecision),
+	}
 }
 
 func (m *memStore) UpsertInstallation(_ context.Context, inst storage.Installation) error {
@@ -36,27 +44,66 @@ func (m *memStore) GetInstallation(_ context.Context, id int64) (*storage.Instal
 	}
 	return nil, nil
 }
-func (m *memStore) UpsertRepository(_ context.Context, _ storage.Repository) error { return nil }
-func (m *memStore) GetRepository(_ context.Context, _ int64) (*storage.Repository, error) {
-	return nil, nil
-}
-func (m *memStore) GetRepositoryByFullName(_ context.Context, _ int64, _ string) (*storage.Repository, error) {
-	return nil, nil
-}
-func (m *memStore) UpdateManifestSHA(_ context.Context, _ int64, _ string) error { return nil }
-func (m *memStore) SaveScan(_ context.Context, _ storage.ScanResult) error        { return nil }
-func (m *memStore) GetScan(_ context.Context, _ string) (*storage.ScanResult, error) {
-	return nil, nil
-}
-func (m *memStore) GetScansByRepo(_ context.Context, _ int64, _ int) ([]storage.ScanResult, error) {
-	return nil, nil
-}
-func (m *memStore) UpdateScanStatus(_ context.Context, _ string, _ storage.ScanStatus) error {
+func (m *memStore) UpsertRepository(_ context.Context, repo storage.Repository) error {
+	m.repositories[repo.ID] = repo
 	return nil
 }
-func (m *memStore) SaveDecision(_ context.Context, _ storage.VerificationDecision) error { return nil }
-func (m *memStore) GetDecisionsByScan(_ context.Context, _ string) ([]storage.VerificationDecision, error) {
+func (m *memStore) GetRepository(_ context.Context, id int64) (*storage.Repository, error) {
+	if r, ok := m.repositories[id]; ok {
+		return &r, nil
+	}
 	return nil, nil
+}
+func (m *memStore) GetRepositoryByFullName(_ context.Context, instID int64, name string) (*storage.Repository, error) {
+	for _, r := range m.repositories {
+		if r.InstallationID == instID && r.FullName == name {
+			return &r, nil
+		}
+	}
+	return nil, nil
+}
+func (m *memStore) UpdateManifestSHA(_ context.Context, id int64, sha string) error {
+	if r, ok := m.repositories[id]; ok {
+		r.ManifestSHA = sha
+		m.repositories[id] = r
+	}
+	return nil
+}
+func (m *memStore) SaveScan(_ context.Context, scan storage.ScanResult) error {
+	m.scans[scan.ID] = scan
+	return nil
+}
+func (m *memStore) GetScan(_ context.Context, id string) (*storage.ScanResult, error) {
+	if s, ok := m.scans[id]; ok {
+		return &s, nil
+	}
+	return nil, nil
+}
+func (m *memStore) GetScansByRepo(_ context.Context, repoID int64, limit int) ([]storage.ScanResult, error) {
+	var out []storage.ScanResult
+	for _, s := range m.scans {
+		if s.RepoID == repoID {
+			out = append(out, s)
+		}
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+func (m *memStore) UpdateScanStatus(_ context.Context, id string, status storage.ScanStatus) error {
+	if s, ok := m.scans[id]; ok {
+		s.Status = status
+		m.scans[id] = s
+	}
+	return nil
+}
+func (m *memStore) SaveDecision(_ context.Context, d storage.VerificationDecision) error {
+	m.decisions[d.ScanID] = append(m.decisions[d.ScanID], d)
+	return nil
+}
+func (m *memStore) GetDecisionsByScan(_ context.Context, scanID string) ([]storage.VerificationDecision, error) {
+	return m.decisions[scanID], nil
 }
 func (m *memStore) GetStats(_ context.Context, _ int64) (*storage.RepoStats, error) { return nil, nil }
 func (m *memStore) Close() error                                                      { return nil }

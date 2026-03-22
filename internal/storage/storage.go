@@ -80,7 +80,9 @@ const (
 type ScanResult struct {
 	ID             string
 	RepoID         int64
+	InstallationID int64
 	PRNumber       int
+	HeadBranch     string // PR branch name — needed to commit manifest
 	CommitSHA      string
 	BaseSHA        string
 	ScannedAt      time.Time
@@ -275,11 +277,13 @@ func (s *SQLiteStore) SaveScan(ctx context.Context, scan ScanResult) error {
 	}
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO scan_results
-			(id, repo_id, pr_number, commit_sha, base_sha, scanned_at,
+			(id, repo_id, installation_id, pr_number, head_branch,
+			 commit_sha, base_sha, scanned_at,
 			 scan_duration_ms, capabilities_json, novel_count, status,
 			 check_run_id, comment_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, scan.ID, scan.RepoID, scan.PRNumber, scan.CommitSHA, scan.BaseSHA,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, scan.ID, scan.RepoID, scan.InstallationID, scan.PRNumber, scan.HeadBranch,
+		scan.CommitSHA, scan.BaseSHA,
 		scan.ScannedAt.UTC(), scan.ScanDurationMS, string(capsJSON),
 		scan.NovelCount, scan.Status, scan.CheckRunID, scan.CommentID)
 	if err != nil {
@@ -290,7 +294,8 @@ func (s *SQLiteStore) SaveScan(ctx context.Context, scan ScanResult) error {
 
 func (s *SQLiteStore) GetScan(ctx context.Context, id string) (*ScanResult, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, repo_id, pr_number, commit_sha, base_sha, scanned_at,
+		SELECT id, repo_id, COALESCE(installation_id,0), pr_number, COALESCE(head_branch,''),
+		       commit_sha, base_sha, scanned_at,
 		       scan_duration_ms, capabilities_json, novel_count, status,
 		       COALESCE(check_run_id,0), COALESCE(comment_id,0)
 		FROM scan_results WHERE id = ?
@@ -300,7 +305,8 @@ func (s *SQLiteStore) GetScan(ctx context.Context, id string) (*ScanResult, erro
 
 func (s *SQLiteStore) GetScansByRepo(ctx context.Context, repoID int64, limit int) ([]ScanResult, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, repo_id, pr_number, commit_sha, base_sha, scanned_at,
+		SELECT id, repo_id, COALESCE(installation_id,0), pr_number, COALESCE(head_branch,''),
+		       commit_sha, base_sha, scanned_at,
 		       scan_duration_ms, capabilities_json, novel_count, status,
 		       COALESCE(check_run_id,0), COALESCE(comment_id,0)
 		FROM scan_results WHERE repo_id = ?
@@ -339,7 +345,8 @@ type scanner interface {
 func scanScanResult(row scanner) (*ScanResult, error) {
 	var sr ScanResult
 	var scannedAt, capsJSON, status string
-	err := row.Scan(&sr.ID, &sr.RepoID, &sr.PRNumber, &sr.CommitSHA, &sr.BaseSHA,
+	err := row.Scan(&sr.ID, &sr.RepoID, &sr.InstallationID, &sr.PRNumber, &sr.HeadBranch,
+		&sr.CommitSHA, &sr.BaseSHA,
 		&scannedAt, &sr.ScanDurationMS, &capsJSON, &sr.NovelCount, &status,
 		&sr.CheckRunID, &sr.CommentID)
 	if err == sql.ErrNoRows {

@@ -50,8 +50,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // BuildMux constructs the request router.
-// Routes are added here as each step is implemented.
-func BuildMux(webhookHandler http.Handler) *http.ServeMux {
+func BuildMux(webhookHandler http.Handler, verifyHandler http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Health check — used by Fly.io and load balancers
@@ -62,6 +61,9 @@ func BuildMux(webhookHandler http.Handler) *http.ServeMux {
 
 	// GitHub webhook endpoint
 	mux.Handle("/webhooks/github", webhookHandler)
+
+	// Verification decision endpoint
+	mux.Handle("/api/verify", verifyHandler)
 
 	return mux
 }

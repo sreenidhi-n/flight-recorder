@@ -77,8 +77,12 @@ func runServe(args []string) error {
 	pipeline := gh.NewPipeline(app, sc, store, baseURL)
 	webhookHandler := gh.NewHandler(app, store, pipeline.ScanFunc())
 
+	// --- Verification decision engine ---
+	verifier := gh.NewVerifier(app, store, baseURL)
+	verifyHandler := server.NewVerifyHandler(verifier)
+
 	// --- HTTP server ---
-	mux := server.BuildMux(webhookHandler)
+	mux := server.BuildMux(webhookHandler, verifyHandler)
 	srv := server.New(addr, mux)
 
 	// Graceful shutdown on SIGINT / SIGTERM
