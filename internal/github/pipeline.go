@@ -36,11 +36,17 @@ type Pipeline struct {
 	app     *App
 	sc      *scanner.Scanner
 	store   storage.Store
+	baseURL string // e.g. "https://app.tass.dev" — used in PR comment links
 }
 
 // NewPipeline constructs a Pipeline.
-func NewPipeline(app *App, sc *scanner.Scanner, store storage.Store) *Pipeline {
-	return &Pipeline{app: app, sc: sc, store: store}
+// baseURL is the public-facing URL of this TASS instance (e.g. "http://localhost:8080").
+// Set via TASS_BASE_URL env var in production.
+func NewPipeline(app *App, sc *scanner.Scanner, store storage.Store, baseURL string) *Pipeline {
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
+	}
+	return &Pipeline{app: app, sc: sc, store: store, baseURL: baseURL}
 }
 
 // Run executes the full scan pipeline for one PR event.
@@ -73,15 +79,25 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 		return
 	}
 
-	// --- 2. Fetch changed file list ---
+	// --- 2. Create check run immediately (shows "in progress" on the PR) ---
+	checkRunID, err := p.app.CreateCheckRun(ctx, token, owner, repo, req.HeadSHA)
+	if err != nil {
+		log.Error("pipeline: create check run", "error", err)
+		// Non-fatal — continue the scan even if GitHub check fails
+	} else {
+		log.Info("pipeline: check run created", "check_run_id", checkRunID)
+	}
+
+	// --- 3. Fetch changed file list ---
 	changedFiles, err := p.app.FetchChangedFiles(ctx, token, owner, repo, req.PRNumber)
 	if err != nil {
 		log.Error("pipeline: fetch changed files", "error", err)
+		p.failCheck(ctx, token, owner, repo, checkRunID, "Failed to fetch changed files")
 		return
 	}
 	log.Info("pipeline: fetched changed files", "count", len(changedFiles))
 
-	// --- 3. Fetch dep files (head + base) ---
+	// --- 4. Fetch dep files (head + base) ---
 	headDeps, baseDeps, err := p.app.FetchDepFiles(
 		ctx, token, owner, repo,
 		req.HeadSHA, req.BaseSHA,
@@ -89,20 +105,22 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 	)
 	if err != nil {
 		log.Error("pipeline: fetch dep files", "error", err)
+		p.failCheck(ctx, token, owner, repo, checkRunID, "Failed to fetch dependency files")
 		return
 	}
 
-	// --- 4. Fetch changed source files (head only) ---
+	// --- 5. Fetch changed source files (head only) ---
 	headSources, err := p.app.FetchSourceFiles(
 		ctx, token, owner, repo,
 		req.HeadSHA, changedFiles, sourceExts,
 	)
 	if err != nil {
 		log.Error("pipeline: fetch source files", "error", err)
+		p.failCheck(ctx, token, owner, repo, checkRunID, "Failed to fetch source files")
 		return
 	}
 
-	// --- 5. Merge dep + source files into one headFiles map ---
+	// --- 6. Merge dep + source files into one headFiles map ---
 	headFiles := make(map[string][]byte, len(headDeps)+len(headSources))
 	for k, v := range headDeps {
 		headFiles[k] = v
@@ -110,13 +128,12 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 	for k, v := range headSources {
 		headFiles[k] = v
 	}
-
 	log.Info("pipeline: fetched files",
 		"dep_files", len(headDeps),
 		"source_files", len(headSources),
 	)
 
-	// --- 6. Fetch tass.manifest.yaml at base (nil = no manifest yet) ---
+	// --- 7. Fetch tass.manifest.yaml at base (nil = no manifest yet) ---
 	var existingManifest *manifest.Manifest
 	manifestContent, err := p.app.FetchFileContent(
 		ctx, token, owner, repo, "tass.manifest.yaml", req.BaseSHA)
@@ -129,16 +146,17 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 		}
 	}
 
-	// --- 7. Run scanner ---
+	// --- 8. Run scanner ---
 	capSet, err := p.sc.ScanRemote(headFiles, baseDeps)
 	if err != nil {
 		log.Error("pipeline: scan remote", "error", err)
+		p.failCheck(ctx, token, owner, repo, checkRunID, "Scanner error")
 		return
 	}
 	capSet.CommitSHA = req.HeadSHA
 	log.Info("pipeline: scan complete", "capabilities_detected", len(capSet.Capabilities))
 
-	// --- 8. Diff against manifest to find novel capabilities ---
+	// --- 9. Diff against manifest to find novel capabilities ---
 	var novelCaps []contracts.Capability
 	if existingManifest != nil {
 		novelCaps = manifest.Diff(*capSet, existingManifest)
@@ -147,10 +165,35 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 	}
 	log.Info("pipeline: diff complete", "novel_capabilities", len(novelCaps))
 
-	// --- 9. Store scan result ---
+	// --- 10. Build scan ID and store result ---
 	scanID := fmt.Sprintf("scan-%s-%d-%s", sanitize(req.RepoFullName), req.PRNumber, req.HeadSHA[:8])
 	durationMS := time.Since(start).Milliseconds()
 
+	// --- 11. Post PR comment ---
+	commentBody := RenderComment(scanID, novelCaps, p.baseURL)
+	commentID, err := p.app.CreateOrUpdateComment(ctx, token, owner, repo, req.PRNumber, commentBody)
+	if err != nil {
+		log.Error("pipeline: post PR comment", "error", err)
+		// Non-fatal — scan still stored
+	} else {
+		log.Info("pipeline: PR comment posted", "comment_id", commentID)
+	}
+
+	// --- 12. Update check run ---
+	if checkRunID != 0 {
+		conclusion := ConclusionSuccess
+		if len(novelCaps) > 0 {
+			conclusion = ConclusionActionRequired
+		}
+		title, summary := CheckSummary(len(novelCaps), scanID, p.baseURL)
+		if err := p.app.UpdateCheckRun(ctx, token, owner, repo, checkRunID, conclusion, title, summary); err != nil {
+			log.Error("pipeline: update check run", "error", err)
+		} else {
+			log.Info("pipeline: check run updated", "conclusion", conclusion)
+		}
+	}
+
+	// --- 13. Store scan result (with check + comment IDs for Step 3.6) ---
 	scanResult := storage.ScanResult{
 		ID:             scanID,
 		RepoID:         req.RepoID,
@@ -162,6 +205,8 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 		Capabilities:   novelCaps,
 		NovelCount:     len(novelCaps),
 		Status:         storage.StatusPending,
+		CheckRunID:     checkRunID,
+		CommentID:      commentID,
 	}
 
 	if err := p.store.SaveScan(ctx, scanResult); err != nil {
@@ -169,11 +214,21 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 		return
 	}
 
-	log.Info("pipeline: scan stored",
+	log.Info("pipeline: complete",
 		"scan_id", scanID,
 		"novel_count", len(novelCaps),
 		"duration_ms", durationMS,
 	)
+}
+
+// failCheck updates a check run to failure with a brief message.
+// Used when the pipeline itself errors before producing results.
+func (p *Pipeline) failCheck(ctx context.Context, token, owner, repo string, checkRunID int64, reason string) {
+	if checkRunID == 0 {
+		return
+	}
+	_ = p.app.UpdateCheckRun(ctx, token, owner, repo, checkRunID,
+		ConclusionFailure, "TASS scan error", reason)
 }
 
 // ensureRepo upserts the installation and repository records into storage.

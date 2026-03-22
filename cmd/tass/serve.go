@@ -73,7 +73,8 @@ func runServe(args []string) error {
 	sc := scanner.New(scanner.DefaultRegistry, astScanner)
 
 	// --- Pipeline + Webhook handler ---
-	pipeline := gh.NewPipeline(app, sc, store)
+	baseURL := os.Getenv("TASS_BASE_URL") // e.g. "https://app.tass.dev"; defaults to localhost
+	pipeline := gh.NewPipeline(app, sc, store, baseURL)
 	webhookHandler := gh.NewHandler(app, store, pipeline.ScanFunc())
 
 	// --- HTTP server ---
