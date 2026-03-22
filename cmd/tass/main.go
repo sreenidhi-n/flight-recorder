@@ -22,8 +22,11 @@ func main() {
 			os.Exit(1)
 		}
 	case "scan":
-		fmt.Fprintln(os.Stderr, "tass scan: not yet implemented")
-		os.Exit(1)
+		code, err := runScan(os.Args[2:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		}
+		os.Exit(code)
 	case "serve":
 		fmt.Fprintln(os.Stderr, "tass serve: not yet implemented")
 		os.Exit(1)
