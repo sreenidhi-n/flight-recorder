@@ -1,0 +1,7 @@
+category: network_access
+name: "HTTP client via requests library"
+confidence: 0.95
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:requests:client:post
+cap_id: "requests:client"
+symbol_capture: "method"

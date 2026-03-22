@@ -1,0 +1,7 @@
+category: network_access
+name: "HTTP client via urllib"
+confidence: 0.9
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:urllib:client:urlopen
+cap_id: "urllib:client"
+symbol_capture: "method"

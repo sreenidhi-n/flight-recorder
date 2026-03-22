@@ -1,0 +1,7 @@
+category: filesystem_operation
+name: "Filesystem operation via os package"
+confidence: 0.9
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:go:os:file:WriteFile
+cap_id: "os:file"
+symbol_capture: "method"

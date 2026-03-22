@@ -1,0 +1,7 @@
+category: filesystem_operation
+name: "Filesystem operation via Node.js fs module"
+confidence: 0.9
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:javascript:fs:file:writeFile
+cap_id: "fs:file"
+symbol_capture: "method"

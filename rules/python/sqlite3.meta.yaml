@@ -1,0 +1,7 @@
+category: database_operation
+name: "SQLite database connection"
+confidence: 0.95
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:sqlite3:db:connect
+cap_id: "sqlite3:db"
+symbol_capture: "method"

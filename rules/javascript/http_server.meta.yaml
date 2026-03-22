@@ -1,0 +1,7 @@
+category: network_access
+name: "HTTP server creation"
+confidence: 0.95
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:javascript:http:server:createServer  or  ast:javascript:http:server:express
+cap_id: "http:server"
+symbol_capture: "method"

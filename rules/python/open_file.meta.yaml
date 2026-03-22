@@ -1,0 +1,7 @@
+category: filesystem_operation
+name: "Filesystem access via open()"
+confidence: 0.8
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:builtins:file:open
+cap_id: "builtins:file"
+symbol_capture: "func"

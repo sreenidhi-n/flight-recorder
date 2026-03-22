@@ -1,0 +1,7 @@
+category: network_access
+name: "HTTP client outbound request"
+confidence: 0.9
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:javascript:http:client:fetch  or  ast:javascript:http:client:post
+cap_id: "http:client"
+symbol_capture: "method"

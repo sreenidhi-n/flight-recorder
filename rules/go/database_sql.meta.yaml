@@ -1,0 +1,7 @@
+category: database_operation
+name: "Database SQL operation"
+confidence: 0.9
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:go:database/sql:op:Query
+cap_id: "database/sql:op"
+symbol_capture: "method"

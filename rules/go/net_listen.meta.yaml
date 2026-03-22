@@ -1,0 +1,7 @@
+category: network_access
+name: "Network listener or dialer"
+confidence: 0.95
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:go:net:socket:Listen
+cap_id: "net:socket"
+symbol_capture: "method"
