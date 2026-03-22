@@ -196,14 +196,70 @@ func (s *Scanner) ScanDiff(repoRoot, baseBranch string) (*contracts.CapabilitySe
 // webhook-triggered scans where files are fetched from the GitHub API.
 //
 // headFiles: map of repo-relative path → current file content (changed files only).
+//   Includes both dependency files and source files.
 // baseDeps: map of dep file path → base branch content (nil value = new file in PR).
 //
 // Because DepParser and ASTScanner both operate on []byte, this implementation
-// is straightforward and requires no filesystem access.
+// requires no filesystem access. Source code is processed in memory only and
+// never written to disk or stored — only the resulting CapabilitySet is kept.
 func (s *Scanner) ScanRemote(headFiles, baseDeps map[string][]byte) (*contracts.CapabilitySet, error) {
-	// Phase 3: implement in Step 3.4 (webhook handler).
-	// The signature is load-bearing — do not change it.
-	return nil, fmt.Errorf("scanner.ScanRemote: not yet implemented (Phase 3)")
+	seen := make(map[string]struct{})
+	var caps []contracts.Capability
+
+	// --- Layer 0: dependency file diffing ---
+	for path, headContent := range headFiles {
+		filename := filepath.Base(path)
+		parser, ok := s.registry[filename]
+		if !ok {
+			continue
+		}
+
+		baseContent := baseDeps[path] // nil = file is new in this PR
+
+		added, _, err := DiffDependencies(baseContent, headContent, parser)
+		if err != nil {
+			slog.Warn("scanner.ScanRemote: dep diff failed, skipping",
+				"file", path, "err", err)
+			continue
+		}
+
+		for _, c := range added {
+			if _, dup := seen[c.ID]; !dup {
+				seen[c.ID] = struct{}{}
+				c.Location.File = path
+				caps = append(caps, c)
+			}
+		}
+	}
+
+	// --- Layer 1: AST scan source files ---
+	if s.astScanner != nil {
+		for path, content := range headFiles {
+			lang, ok := extToLang[strings.ToLower(filepath.Ext(path))]
+			if !ok {
+				continue
+			}
+
+			fileCaps, err := s.astScanner.ScanBytes(content, path, lang)
+			if err != nil {
+				slog.Warn("scanner.ScanRemote: AST scan failed, skipping",
+					"file", path, "err", err)
+				continue
+			}
+
+			for _, c := range fileCaps {
+				if _, dup := seen[c.ID]; !dup {
+					seen[c.ID] = struct{}{}
+					caps = append(caps, c)
+				}
+			}
+		}
+	}
+
+	return &contracts.CapabilitySet{
+		ScanTime:     time.Now().UTC(),
+		Capabilities: caps,
+	}, nil
 }
 
 // --- internal helpers ---

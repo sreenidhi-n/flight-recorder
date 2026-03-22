@@ -10,6 +10,7 @@ import (
 	"time"
 
 	gh "github.com/tass-security/tass/internal/github"
+	"github.com/tass-security/tass/internal/scanner"
 	"github.com/tass-security/tass/internal/server"
 	"github.com/tass-security/tass/internal/storage"
 )
@@ -63,10 +64,17 @@ func runServe(args []string) error {
 	}
 	slog.Info("serve: github app loaded", "app_id", cfg.AppID)
 
-	// --- Webhook handler ---
-	// onScan is nil for now (Step 3.3 — plumbing only).
-	// Step 3.4 will wire in the real scan pipeline.
-	webhookHandler := gh.NewHandler(app, store, nil)
+	// --- Scanner ---
+	astScanner, astErr := scanner.NewASTScannerFromDir("rules")
+	if astErr != nil {
+		slog.Warn("serve: AST scanner unavailable, Layer 1 disabled", "error", astErr)
+		astScanner = nil
+	}
+	sc := scanner.New(scanner.DefaultRegistry, astScanner)
+
+	// --- Pipeline + Webhook handler ---
+	pipeline := gh.NewPipeline(app, sc, store)
+	webhookHandler := gh.NewHandler(app, store, pipeline.ScanFunc())
 
 	// --- HTTP server ---
 	mux := server.BuildMux(webhookHandler)
