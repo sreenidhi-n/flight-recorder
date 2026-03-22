@@ -36,7 +36,7 @@ func (a *App) CreateCheckRun(ctx context.Context, token, owner, repo, headSHA st
 	}
 
 	body, err := a.apiPost(ctx, token,
-		fmt.Sprintf("%s/repos/%s/%s/check-runs", githubAPIBase, owner, repo),
+		fmt.Sprintf("%s/repos/%s/%s/check-runs", a.base(), owner, repo),
 		payload)
 	if err != nil {
 		return 0, fmt.Errorf("create check run: %w", err)
@@ -63,7 +63,7 @@ func (a *App) UpdateCheckRun(ctx context.Context, token, owner, repo string, che
 		},
 	}
 
-	url := fmt.Sprintf("%s/repos/%s/%s/check-runs/%d", githubAPIBase, owner, repo, checkRunID)
+	url := fmt.Sprintf("%s/repos/%s/%s/check-runs/%d", a.base(), owner, repo, checkRunID)
 	if _, err := a.apiPatch(ctx, token, url, payload); err != nil {
 		return fmt.Errorf("update check run %d: %w", checkRunID, err)
 	}

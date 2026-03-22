@@ -179,7 +179,7 @@ func (v *Verifier) Decide(
 	if tokenErr == nil && scan.CommentID != 0 {
 		updatedBody := v.renderVerifiedComment(scanID, scan.Capabilities, decided, allConfirmed)
 		commentURL := fmt.Sprintf("%s/repos/%s/%s/issues/comments/%d",
-			githubAPIBase, owner, repoName, scan.CommentID)
+			v.app.base(), owner, repoName, scan.CommentID)
 		if _, err := v.app.apiPatch(ctx, token, commentURL,
 			map[string]any{"body": updatedBody}); err != nil {
 			log.Error("verifier: update PR comment", "error", err)

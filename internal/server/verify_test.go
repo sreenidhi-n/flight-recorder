@@ -70,6 +70,9 @@ func (m *serverMemStore) GetDecisionsByScan(_ context.Context, id string) ([]sto
 func (m *serverMemStore) GetStats(_ context.Context, _ int64) (*storage.RepoStats, error) {
 	return nil, nil
 }
+func (m *serverMemStore) GetStatsByInstallation(_ context.Context, _ int64) (*storage.InstallationStats, error) {
+	return nil, nil
+}
 func (m *serverMemStore) Close() error { return nil }
 
 // --- helpers ---

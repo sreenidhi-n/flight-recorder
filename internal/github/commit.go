@@ -30,7 +30,7 @@ func (a *App) CommitManifest(
 		payload["sha"] = existingSHA
 	}
 
-	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", githubAPIBase, owner, repo, manifestPath)
+	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", a.base(), owner, repo, manifestPath)
 	body, err := a.apiPut(ctx, token, url, payload)
 	if err != nil {
 		return fmt.Errorf("commit manifest to %s@%s: %w", repo, branch, err)

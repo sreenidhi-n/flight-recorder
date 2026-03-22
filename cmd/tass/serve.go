@@ -81,8 +81,11 @@ func runServe(args []string) error {
 	verifier := gh.NewVerifier(app, store, baseURL)
 	verifyHandler := server.NewVerifyHandler(verifier)
 
+	// --- Stats handler ---
+	statsHandler := server.NewStatsHandler(store)
+
 	// --- HTTP server ---
-	mux := server.BuildMux(webhookHandler, verifyHandler)
+	mux := server.BuildMux(webhookHandler, verifyHandler, statsHandler)
 	srv := server.New(addr, mux)
 
 	// Graceful shutdown on SIGINT / SIGTERM

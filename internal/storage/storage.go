@@ -45,6 +45,7 @@ type Store interface {
 
 	// Analytics
 	GetStats(ctx context.Context, repoID int64) (*RepoStats, error)
+	GetStatsByInstallation(ctx context.Context, installationID int64) (*InstallationStats, error)
 
 	Close() error
 }
@@ -104,13 +105,39 @@ type VerificationDecision struct {
 	DecidedAt     time.Time
 }
 
-type RepoStats struct {
-	RepoID       int64
-	TotalScans   int
-	TotalCaps    int
+// DeveloperStats tracks decisions made by a specific developer.
+type DeveloperStats struct {
 	ConfirmCount int
 	RevertCount  int
+}
+
+// CategoryStats tracks detected + decided capability counts per category.
+type CategoryStats struct {
+	TotalDetected int
+	ConfirmCount  int
+	RevertCount   int
+}
+
+type RepoStats struct {
+	RepoID        int64
+	TotalScans    int
+	TotalCaps     int
+	ConfirmCount  int
+	RevertCount   int
 	AvgDurationMS float64
+	ByDeveloper   map[string]DeveloperStats
+	ByCategory    map[string]CategoryStats
+}
+
+// InstallationStats aggregates analytics across all repos under one GitHub App installation.
+type InstallationStats struct {
+	InstallationID int64
+	TotalRepos     int
+	TotalScans     int
+	TotalCaps      int
+	ConfirmCount   int
+	RevertCount    int
+	ByDeveloper    map[string]DeveloperStats
 }
 
 // --- SQLiteStore ---
@@ -407,7 +434,11 @@ func (s *SQLiteStore) GetDecisionsByScan(ctx context.Context, scanID string) ([]
 // --- Analytics ---
 
 func (s *SQLiteStore) GetStats(ctx context.Context, repoID int64) (*RepoStats, error) {
-	stats := &RepoStats{RepoID: repoID}
+	stats := &RepoStats{
+		RepoID:      repoID,
+		ByDeveloper: make(map[string]DeveloperStats),
+		ByCategory:  make(map[string]CategoryStats),
+	}
 
 	row := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*), COALESCE(SUM(novel_count),0), COALESCE(AVG(scan_duration_ms),0)
@@ -417,16 +448,148 @@ func (s *SQLiteStore) GetStats(ctx context.Context, repoID int64) (*RepoStats, e
 		return nil, fmt.Errorf("storage: get scan stats for repo %d: %w", repoID, err)
 	}
 
-	row = s.db.QueryRowContext(ctx, `
-		SELECT
-			COALESCE(SUM(CASE WHEN vd.decision = 'confirm' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN vd.decision = 'revert'  THEN 1 ELSE 0 END), 0)
+	// Per-developer breakdown
+	devRows, err := s.db.QueryContext(ctx, `
+		SELECT vd.decided_by,
+			SUM(CASE WHEN vd.decision = 'confirm' THEN 1 ELSE 0 END),
+			SUM(CASE WHEN vd.decision = 'revert'  THEN 1 ELSE 0 END)
+		FROM verification_decisions vd
+		JOIN scan_results sr ON sr.id = vd.scan_id
+		WHERE sr.repo_id = ?
+		GROUP BY vd.decided_by
+	`, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("storage: get developer stats for repo %d: %w", repoID, err)
+	}
+	defer devRows.Close()
+	for devRows.Next() {
+		var dev string
+		var ds DeveloperStats
+		if err := devRows.Scan(&dev, &ds.ConfirmCount, &ds.RevertCount); err != nil {
+			return nil, fmt.Errorf("storage: scan developer stats row: %w", err)
+		}
+		stats.ByDeveloper[dev] = ds
+		stats.ConfirmCount += ds.ConfirmCount
+		stats.RevertCount += ds.RevertCount
+	}
+	if err := devRows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: developer stats rows: %w", err)
+	}
+
+	// Build capID→category from scan capabilities, and count detections per category
+	capIDToCategory, err := s.buildCapCategoryMap(ctx, repoID)
+	if err != nil {
+		return nil, err
+	}
+	for _, cat := range capIDToCategory {
+		cs := stats.ByCategory[string(cat)]
+		cs.TotalDetected++
+		stats.ByCategory[string(cat)] = cs
+	}
+
+	// Per-category decision counts
+	dcRows, err := s.db.QueryContext(ctx, `
+		SELECT vd.capability_id, vd.decision
 		FROM verification_decisions vd
 		JOIN scan_results sr ON sr.id = vd.scan_id
 		WHERE sr.repo_id = ?
 	`, repoID)
-	if err := row.Scan(&stats.ConfirmCount, &stats.RevertCount); err != nil {
-		return nil, fmt.Errorf("storage: get decision stats for repo %d: %w", repoID, err)
+	if err != nil {
+		return nil, fmt.Errorf("storage: get decision category stats for repo %d: %w", repoID, err)
+	}
+	defer dcRows.Close()
+	for dcRows.Next() {
+		var capID, decision string
+		if err := dcRows.Scan(&capID, &decision); err != nil {
+			return nil, fmt.Errorf("storage: scan decision category row: %w", err)
+		}
+		cat, ok := capIDToCategory[capID]
+		if !ok {
+			continue
+		}
+		cs := stats.ByCategory[string(cat)]
+		if decision == "confirm" {
+			cs.ConfirmCount++
+		} else {
+			cs.RevertCount++
+		}
+		stats.ByCategory[string(cat)] = cs
+	}
+	if err := dcRows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: decision category stats rows: %w", err)
+	}
+
+	return stats, nil
+}
+
+// buildCapCategoryMap returns a unique capID→category map across all scans for a repo.
+func (s *SQLiteStore) buildCapCategoryMap(ctx context.Context, repoID int64) (map[string]contracts.CapCategory, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT capabilities_json FROM scan_results WHERE repo_id = ?`, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("storage: fetch capabilities for repo %d: %w", repoID, err)
+	}
+	defer rows.Close()
+	result := make(map[string]contracts.CapCategory)
+	for rows.Next() {
+		var capsJSON string
+		if err := rows.Scan(&capsJSON); err != nil {
+			return nil, fmt.Errorf("storage: scan capabilities_json row: %w", err)
+		}
+		var caps []contracts.Capability
+		if err := json.Unmarshal([]byte(capsJSON), &caps); err != nil {
+			continue // skip malformed rows
+		}
+		for _, cap := range caps {
+			result[cap.ID] = cap.Category
+		}
+	}
+	return result, rows.Err()
+}
+
+func (s *SQLiteStore) GetStatsByInstallation(ctx context.Context, installationID int64) (*InstallationStats, error) {
+	stats := &InstallationStats{
+		InstallationID: installationID,
+		ByDeveloper:    make(map[string]DeveloperStats),
+	}
+
+	row := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT r.id), COUNT(sr.id),
+			COALESCE(SUM(sr.novel_count),0)
+		FROM repositories r
+		LEFT JOIN scan_results sr ON sr.repo_id = r.id
+		WHERE r.installation_id = ?
+	`, installationID)
+	if err := row.Scan(&stats.TotalRepos, &stats.TotalScans, &stats.TotalCaps); err != nil {
+		return nil, fmt.Errorf("storage: get installation scan stats %d: %w", installationID, err)
+	}
+
+	devRows, err := s.db.QueryContext(ctx, `
+		SELECT vd.decided_by,
+			SUM(CASE WHEN vd.decision = 'confirm' THEN 1 ELSE 0 END),
+			SUM(CASE WHEN vd.decision = 'revert'  THEN 1 ELSE 0 END)
+		FROM verification_decisions vd
+		JOIN scan_results sr ON sr.id = vd.scan_id
+		JOIN repositories r ON r.id = sr.repo_id
+		WHERE r.installation_id = ?
+		GROUP BY vd.decided_by
+	`, installationID)
+	if err != nil {
+		return nil, fmt.Errorf("storage: get installation developer stats %d: %w", installationID, err)
+	}
+	defer devRows.Close()
+	for devRows.Next() {
+		var dev string
+		var ds DeveloperStats
+		if err := devRows.Scan(&dev, &ds.ConfirmCount, &ds.RevertCount); err != nil {
+			return nil, fmt.Errorf("storage: scan installation developer stats row: %w", err)
+		}
+		stats.ByDeveloper[dev] = ds
+		stats.ConfirmCount += ds.ConfirmCount
+		stats.RevertCount += ds.RevertCount
+	}
+	if err := devRows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: installation developer stats rows: %w", err)
 	}
 
 	return stats, nil

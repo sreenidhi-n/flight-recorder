@@ -19,7 +19,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-const githubAPIBase = "https://api.github.com"
+const defaultAPIBase = "https://api.github.com"
 
 // App is a GitHub App with JWT auth and per-installation token management.
 type App struct {
@@ -27,10 +27,19 @@ type App struct {
 	ClientID      string
 	ClientSecret  string
 	WebhookSecret string
+	apiBase       string // override for tests; empty → uses defaultAPIBase
 	privateKey    *rsa.PrivateKey
 
 	mu     sync.Mutex
 	tokens map[int64]*cachedToken // installation_id → cached token
+}
+
+// base returns the GitHub API base URL.
+func (a *App) base() string {
+	if a.apiBase != "" {
+		return a.apiBase
+	}
+	return defaultAPIBase
 }
 
 type cachedToken struct {
@@ -45,6 +54,7 @@ type Config struct {
 	ClientSecret   string
 	WebhookSecret  string
 	PrivateKeyPath string
+	APIBaseURL     string // optional: override API base for testing
 }
 
 // NewApp constructs a GitHub App from config, loading and parsing the RSA private key.
@@ -85,6 +95,7 @@ func NewApp(cfg Config) (*App, error) {
 		ClientID:      cfg.ClientID,
 		ClientSecret:  cfg.ClientSecret,
 		WebhookSecret: cfg.WebhookSecret,
+		apiBase:       cfg.APIBaseURL,
 		privateKey:    privateKey,
 		tokens:        make(map[int64]*cachedToken),
 	}, nil
@@ -184,7 +195,7 @@ func (a *App) fetchInstallationToken(ctx context.Context, installationID int64) 
 		return "", time.Time{}, err
 	}
 
-	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", githubAPIBase, installationID)
+	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", a.base(), installationID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("github: build token request: %w", err)
@@ -222,7 +233,7 @@ func (a *App) GetRepo(ctx context.Context, installationID int64, owner, repo str
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/repos/%s/%s", githubAPIBase, owner, repo)
+	url := fmt.Sprintf("%s/repos/%s/%s", a.base(), owner, repo)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("github: build get-repo request: %w", err)

@@ -29,7 +29,7 @@ func (a *App) FetchChangedFiles(ctx context.Context, token, owner, repo string, 
 	page := 1
 	for {
 		url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/files?per_page=100&page=%d",
-			githubAPIBase, owner, repo, prNumber, page)
+			a.base(), owner, repo, prNumber, page)
 
 		var batch []PRFile
 		if err := a.apiGet(ctx, token, url, &batch); err != nil {
@@ -52,7 +52,7 @@ func (a *App) FetchChangedFiles(ctx context.Context, token, owner, repo string, 
 // Returns nil, nil if the file does not exist at that ref.
 func (a *App) FetchFile(ctx context.Context, token, owner, repo, path, ref string) (*FileInfo, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s?ref=%s",
-		githubAPIBase, owner, repo, path, ref)
+		a.base(), owner, repo, path, ref)
 
 	var result struct {
 		Content  string `json:"content"`
@@ -100,7 +100,7 @@ func (a *App) FetchFile(ctx context.Context, token, owner, repo, path, ref strin
 // Returns nil, nil if the file does not exist at that ref.
 func (a *App) FetchFileContent(ctx context.Context, token, owner, repo, path, ref string) ([]byte, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s?ref=%s",
-		githubAPIBase, owner, repo, path, ref)
+		a.base(), owner, repo, path, ref)
 
 	var result struct {
 		Content  string `json:"content"`  // base64-encoded, with newlines

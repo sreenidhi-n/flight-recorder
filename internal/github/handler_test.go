@@ -106,7 +106,10 @@ func (m *memStore) GetDecisionsByScan(_ context.Context, scanID string) ([]stora
 	return m.decisions[scanID], nil
 }
 func (m *memStore) GetStats(_ context.Context, _ int64) (*storage.RepoStats, error) { return nil, nil }
-func (m *memStore) Close() error                                                      { return nil }
+func (m *memStore) GetStatsByInstallation(_ context.Context, _ int64) (*storage.InstallationStats, error) {
+	return nil, nil
+}
+func (m *memStore) Close() error { return nil }
 
 // --- helpers ---
 

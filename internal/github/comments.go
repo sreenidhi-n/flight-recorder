@@ -26,7 +26,7 @@ func (a *App) CreateOrUpdateComment(ctx context.Context, token, owner, repo stri
 	if existingID != 0 {
 		// Update existing comment
 		url := fmt.Sprintf("%s/repos/%s/%s/issues/comments/%d",
-			githubAPIBase, owner, repo, existingID)
+			a.base(), owner, repo, existingID)
 		if _, err := a.apiPatch(ctx, token, url, map[string]any{"body": body}); err != nil {
 			return 0, fmt.Errorf("update comment %d: %w", existingID, err)
 		}
@@ -35,7 +35,7 @@ func (a *App) CreateOrUpdateComment(ctx context.Context, token, owner, repo stri
 
 	// Create new comment
 	url := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments",
-		githubAPIBase, owner, repo, prNumber)
+		a.base(), owner, repo, prNumber)
 	respBody, err := a.apiPost(ctx, token, url, map[string]any{"body": body})
 	if err != nil {
 		return 0, fmt.Errorf("create comment: %w", err)
@@ -54,7 +54,7 @@ func (a *App) CreateOrUpdateComment(ctx context.Context, token, owner, repo stri
 // the TASS marker prefix. Returns 0 if not found.
 func (a *App) findTASSComment(ctx context.Context, token, owner, repo string, prNumber int) (int64, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments?per_page=100",
-		githubAPIBase, owner, repo, prNumber)
+		a.base(), owner, repo, prNumber)
 
 	var comments []struct {
 		ID   int64  `json:"id"`
