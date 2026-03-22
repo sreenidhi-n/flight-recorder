@@ -39,13 +39,13 @@ func TestLoadRules_LoadsAll(t *testing.T) {
 		t.Logf("language %q: %d rules loaded", lang, len(langRules))
 	}
 
-	// Verify total rule count: 4 Go + 4 Python + 3 JS = 11
+	// Verify total rule count: 5 Go + 4 Python + 3 JS = 12
 	total := 0
 	for _, r := range rules {
 		total += len(r)
 	}
-	if total < 11 {
-		t.Errorf("total rules: got %d, want at least 11", total)
+	if total < 12 {
+		t.Errorf("total rules: got %d, want at least 12", total)
 	}
 }
 
@@ -113,9 +113,7 @@ import (
 func main() {
 	db, err := sql.Open("postgres", "host=localhost")
 	if err != nil { panic(err) }
-	rows, err := db.Query("SELECT id FROM users WHERE active = $1", true)
-	if err != nil { panic(err) }
-	defer rows.Close()
+	defer db.Close()
 }
 `)
 	s := newScannerFromRules(t)
@@ -128,12 +126,66 @@ func main() {
 	if !ids["ast:go:database/sql:op:Open"] {
 		t.Errorf("missing ast:go:database/sql:op:Open; got: %v", keys(ids))
 	}
-	if !ids["ast:go:database/sql:op:Query"] {
-		t.Errorf("missing ast:go:database/sql:op:Query; got: %v", keys(ids))
-	}
 	for _, c := range caps {
 		if c.Category != contracts.CatDatabaseOp {
 			t.Errorf("%s: Category=%q, want database_operation", c.ID, c.Category)
+		}
+	}
+}
+
+// TestRules_Go_DatabaseSQL_NoBroadMatch verifies that generic method calls like
+// cursor.Exec() (tree-sitter) are NOT matched by the database_sql rule.
+func TestRules_Go_DatabaseSQL_NoBroadMatch(t *testing.T) {
+	src := []byte(`package scanner
+
+import sitter "github.com/smacker/go-tree-sitter"
+
+func run(cursor *sitter.QueryCursor, query *sitter.Query, root *sitter.Node) {
+	cursor.Exec(query, root)
+}
+`)
+	s := newScannerFromRules(t)
+	caps, err := s.ScanBytes(src, "ast.go", "go")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+	for _, c := range caps {
+		if c.ID == "ast:go:database/sql:op:Exec" {
+			t.Errorf("cursor.Exec() should NOT match database_sql rule (false positive)")
+		}
+	}
+}
+
+func TestRules_Go_ExecCommand(t *testing.T) {
+	src := []byte(`package main
+
+import "os/exec"
+
+func runGit(args ...string) error {
+	cmd := exec.Command("git", args...)
+	return cmd.Run()
+}
+
+func runWithContext(ctx context.Context, name string) {
+	exec.CommandContext(ctx, name)
+}
+`)
+	s := newScannerFromRules(t)
+	caps, err := s.ScanBytes(src, "git.go", "go")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+
+	ids := capIDs(caps)
+	if !ids["ast:go:os/exec:subprocess:Command"] {
+		t.Errorf("missing ast:go:os/exec:subprocess:Command; got: %v", keys(ids))
+	}
+	if !ids["ast:go:os/exec:subprocess:CommandContext"] {
+		t.Errorf("missing ast:go:os/exec:subprocess:CommandContext; got: %v", keys(ids))
+	}
+	for _, c := range caps {
+		if c.Category != contracts.CatPrivilege {
+			t.Errorf("%s: Category=%q, want privilege_pattern", c.ID, c.Category)
 		}
 	}
 }

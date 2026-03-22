@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -38,7 +39,7 @@ func runScan(args []string) (int, error) {
 	manifestPath := filepath.Join(repoRoot, manifestFilename)
 	existing, err := manifest.Load(manifestPath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return 1, fmt.Errorf("tass.manifest.yaml not found in %s — run 'tass init' first", repoRoot)
 		}
 		return 1, fmt.Errorf("tass scan: load manifest: %w", err)

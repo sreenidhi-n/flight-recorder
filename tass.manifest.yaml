@@ -19,14 +19,14 @@
 #   status:       confirmed | auto_detected | reverted
 #
 version: "1"
-generated_at: 2026-03-21T16:56:35.735541Z
+generated_at: 2026-03-22T10:15:28.864026Z
 repo: flight-recorder
 capabilities:
     - id: dep:go:golang.org/x/mod
       name: x/mod
       category: external_dependency
       source: layer0_dependency
-      first_detected: 2026-03-21T16:56:35.735541Z
+      first_detected: 2026-03-22T10:15:28.864026Z
       locations:
         - file: go.mod
       status: auto_detected
@@ -34,7 +34,65 @@ capabilities:
       name: gopkg.in/yaml.v3
       category: external_dependency
       source: layer0_dependency
-      first_detected: 2026-03-21T16:56:35.735541Z
+      first_detected: 2026-03-22T10:15:28.864026Z
       locations:
         - file: go.mod
+      status: auto_detected
+    - id: dep:go:github.com/smacker/go-tree-sitter
+      name: smacker/go-tree-sitter
+      category: external_dependency
+      source: layer0_dependency
+      first_detected: 2026-03-22T10:15:28.864026Z
+      locations:
+        - file: go.mod
+      status: auto_detected
+    - id: ast:go:os:file:Stat
+      name: Filesystem operation via os package (Stat)
+      category: filesystem_operation
+      source: layer1_ast
+      first_detected: 2026-03-22T10:15:28.864026Z
+      locations:
+        - file: cmd/tass/init.go
+          line: 30
+          column: 18
+      status: auto_detected
+    - id: ast:go:os/exec:subprocess:Command
+      name: External process execution (Command)
+      category: privilege_pattern
+      source: layer1_ast
+      first_detected: 2026-03-22T10:15:28.864026Z
+      locations:
+        - file: e2e/init_test.go
+          line: 25
+          column: 15
+      status: auto_detected
+    - id: ast:go:os:file:WriteFile
+      name: Filesystem operation via os package (WriteFile)
+      category: filesystem_operation
+      source: layer1_ast
+      first_detected: 2026-03-22T10:15:28.864026Z
+      locations:
+        - file: e2e/init_test.go
+          line: 75
+          column: 15
+      status: auto_detected
+    - id: ast:go:os:file:MkdirAll
+      name: Filesystem operation via os package (MkdirAll)
+      category: filesystem_operation
+      source: layer1_ast
+      first_detected: 2026-03-22T10:15:28.864026Z
+      locations:
+        - file: e2e/init_test.go
+          line: 183
+          column: 15
+      status: auto_detected
+    - id: ast:go:os:file:ReadFile
+      name: Filesystem operation via os package (ReadFile)
+      category: filesystem_operation
+      source: layer1_ast
+      first_detected: 2026-03-22T10:15:28.864026Z
+      locations:
+        - file: internal/scanner/ast.go
+          line: 145
+          column: 21
       status: auto_detected

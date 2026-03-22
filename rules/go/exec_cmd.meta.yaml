@@ -1,0 +1,7 @@
+category: privilege_pattern
+name: "External process execution"
+confidence: 0.9
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:go:os/exec:subprocess:Command
+cap_id: "os/exec:subprocess"
+symbol_capture: "method"
