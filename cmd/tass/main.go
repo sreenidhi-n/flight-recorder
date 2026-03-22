@@ -28,8 +28,10 @@ func main() {
 		}
 		os.Exit(code)
 	case "serve":
-		fmt.Fprintln(os.Stderr, "tass serve: not yet implemented")
-		os.Exit(1)
+		if err := runServe(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "tass: unknown command %q\n", os.Args[1])
 		printUsage()
