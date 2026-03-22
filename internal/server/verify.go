@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/tass-security/tass/internal/auth"
 	gh "github.com/tass-security/tass/internal/github"
 	"github.com/tass-security/tass/pkg/contracts"
 )
@@ -61,8 +62,12 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, `decision must be "confirm" or "revert"`, http.StatusBadRequest)
 		return
 	}
+	// Prefer identity from OAuth session; fall back to request body; then "anonymous".
+	if sess := auth.SessionFrom(r); sess != nil {
+		req.DecidedBy = sess.GitHubLogin
+	}
 	if req.DecidedBy == "" {
-		req.DecidedBy = "anonymous" // Phase 4: will be populated from OAuth session
+		req.DecidedBy = "anonymous"
 	}
 
 	decision := contracts.DecisionConfirm

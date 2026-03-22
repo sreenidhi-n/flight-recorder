@@ -1,0 +1,14 @@
+# Don't copy these into the Docker image
+.git
+*.md
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+cmd/.DS_Store
+fly.toml
+docs/
+e2e/
+*.test
+*.pem
+*.key

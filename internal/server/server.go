@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
+
+	"github.com/tass-security/tass/internal/auth"
 )
 
 // Server wraps an http.Server with graceful shutdown.
@@ -49,8 +52,44 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
-// BuildMux constructs the request router.
-func BuildMux(webhookHandler http.Handler, verifyHandler http.Handler, statsHandler http.Handler) *http.ServeMux {
+// Handlers groups all HTTP handler dependencies for BuildMux.
+type Handlers struct {
+	Webhook       http.Handler // POST /webhooks/github
+	APIVerify     http.Handler // POST /api/verify
+	APIStats      http.Handler // GET  /api/stats
+	Index         http.Handler // GET  /
+	VerifyPage    http.Handler // GET  /verify/
+	Dashboard     http.Handler // GET  /dashboard
+	RepoDashboard http.Handler // GET  /dashboard/repo
+	Setup         http.Handler // GET  /setup
+	Static        http.Handler // GET  /static/
+	OAuthStart    http.Handler // GET  /auth/github
+	OAuthCallback http.Handler // GET  /auth/github/callback
+	OAuthLogout   http.Handler // POST /auth/logout
+}
+
+// RequireAuthMiddleware wraps a handler so unauthenticated users are redirected to OAuth.
+func RequireAuthMiddleware(sessions *auth.SessionStore, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sess, _ := sessions.GetSession(r)
+		if sess == nil {
+			returnTo := r.URL.Path
+			if r.URL.RawQuery != "" {
+				returnTo += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r,
+				"/auth/github?return_to="+url.QueryEscape(returnTo),
+				http.StatusFound)
+			return
+		}
+		// Attach session to context for downstream handlers.
+		ctx := auth.WithSession(r.Context(), sess)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// BuildMux constructs the full request router.
+func BuildMux(h Handlers) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Health check — used by Fly.io and load balancers
@@ -59,14 +98,27 @@ func BuildMux(webhookHandler http.Handler, verifyHandler http.Handler, statsHand
 		fmt.Fprintf(w, `{"status":"ok","service":"tass"}`)
 	})
 
-	// GitHub webhook endpoint
-	mux.Handle("/webhooks/github", webhookHandler)
+	// Static assets (CSS override, etc.)
+	mux.Handle("/static/", h.Static)
 
-	// Verification decision endpoint
-	mux.Handle("/api/verify", verifyHandler)
+	// GitHub OAuth flow
+	mux.Handle("/auth/github/callback", h.OAuthCallback)
+	mux.Handle("/auth/github", h.OAuthStart)
+	mux.Handle("/auth/logout", h.OAuthLogout)
 
-	// Analytics endpoint
-	mux.Handle("/api/stats", statsHandler)
+	// Webhook receiver (no user auth — uses HMAC signature verification)
+	mux.Handle("/webhooks/github", h.Webhook)
+
+	// API endpoints — rate-limited to 60 verify calls per minute per IP
+	mux.Handle("/api/verify", RateLimitMiddleware(60, time.Minute, h.APIVerify))
+	mux.Handle("/api/stats", h.APIStats)
+
+	// Web UI pages (authenticated)
+	mux.Handle("/verify/", h.VerifyPage)
+	mux.Handle("/dashboard/repo", h.RepoDashboard)
+	mux.Handle("/dashboard", h.Dashboard)
+	mux.Handle("/setup", h.Setup)
+	mux.Handle("/", h.Index)
 
 	return mux
 }

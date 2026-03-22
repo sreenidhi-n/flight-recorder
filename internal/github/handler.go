@@ -32,13 +32,21 @@ type Handler struct {
 	app      *App
 	store    storage.Store
 	onScan   ScanFunc
+	firstRun *FirstRunPipeline // nil if not configured
 }
 
 // NewHandler constructs a webhook handler.
 // onScan is called in a background goroutine for each PR event.
-// Pass nil for onScan during Step 3.3 (plumbing only — no scan yet).
+// firstRun is called in a background goroutine on installation.created.
+// Pass nil for either to disable that feature.
 func NewHandler(app *App, store storage.Store, onScan ScanFunc) *Handler {
 	return &Handler{app: app, store: store, onScan: onScan}
+}
+
+// WithFirstRun attaches a FirstRunPipeline to the handler.
+func (h *Handler) WithFirstRun(fr *FirstRunPipeline) *Handler {
+	h.firstRun = fr
+	return h
 }
 
 // ServeHTTP is the HTTP handler for POST /webhooks/github.
@@ -142,6 +150,7 @@ func (h *Handler) handleInstallation(ctx context.Context, body []byte, deliveryI
 			"installation_id", event.Installation.ID,
 			"account", event.Installation.Account.Login,
 			"type", event.Installation.Account.Type,
+			"repos", len(event.Repositories),
 		)
 		inst := storage.Installation{
 			ID:           event.Installation.ID,
@@ -151,6 +160,9 @@ func (h *Handler) handleInstallation(ctx context.Context, body []byte, deliveryI
 		if err := h.store.UpsertInstallation(ctx, inst); err != nil {
 			slog.Error("webhook: store installation", "error", err,
 				"installation_id", event.Installation.ID)
+		}
+		if h.firstRun != nil && len(event.Repositories) > 0 {
+			h.firstRun.Run(ctx, event.Installation.ID, event.Repositories)
 		}
 
 	case "deleted":

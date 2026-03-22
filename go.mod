@@ -10,6 +10,7 @@ require (
 require github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 
 require (
+	github.com/a-h/templ v0.3.1001 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

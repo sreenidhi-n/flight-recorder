@@ -41,9 +41,18 @@ type Repository struct {
 }
 
 // InstallationEvent is sent when the app is installed or uninstalled.
+// The Repositories field lists repos selected by the user on install.
 type InstallationEvent struct {
-	Action       string          `json:"action"`
-	Installation InstallationPayload `json:"installation"`
+	Action       string               `json:"action"`
+	Installation InstallationPayload  `json:"installation"`
+	Repositories []InstallationRepo   `json:"repositories"`
+}
+
+// InstallationRepo is a repo entry in the installation.created event.
+type InstallationRepo struct {
+	ID       int64  `json:"id"`
+	FullName string `json:"full_name"`
+	Private  bool   `json:"private"`
 }
 
 type InstallationPayload struct {

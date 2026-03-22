@@ -1,0 +1,217 @@
+package templates
+
+import (
+	"fmt"
+	"github.com/tass-security/tass/internal/storage"
+)
+
+// DashboardData bundles everything needed for the org-level dashboard.
+type DashboardData struct {
+	Login        string
+	Avatar       string
+	OrgName      string
+	Stats        *storage.InstallationStats
+	RepoStatsList []RepoStatRow
+}
+
+type RepoStatRow struct {
+	FullName     string
+	RepoID       int64
+	TotalScans   int
+	TotalCaps    int
+	ConfirmCount int
+	RevertCount  int
+}
+
+// Dashboard renders the org-level analytics page.
+templ Dashboard(d DashboardData) {
+	@Page("Dashboard", d.Login, d.Avatar) {
+		<hgroup>
+			<h2>Dashboard</h2>
+			<p>{ d.OrgName } · capability tracking overview</p>
+		</hgroup>
+
+		if d.Stats != nil {
+			<div class="stat-grid">
+				<div class="stat-card">
+					<div class="stat-value">{ fmt.Sprintf("%d", d.Stats.TotalRepos) }</div>
+					<div class="stat-label">Repos</div>
+				</div>
+				<div class="stat-card">
+					<div class="stat-value">{ fmt.Sprintf("%d", d.Stats.TotalScans) }</div>
+					<div class="stat-label">Total Scans</div>
+				</div>
+				<div class="stat-card">
+					<div class="stat-value">{ fmt.Sprintf("%d", d.Stats.TotalCaps) }</div>
+					<div class="stat-label">Capabilities Detected</div>
+				</div>
+				<div class="stat-card">
+					<div class="stat-value">{ confirmRate(d.Stats.ConfirmCount, d.Stats.TotalCaps) }%</div>
+					<div class="stat-label">Confirm Rate</div>
+				</div>
+			</div>
+
+			if len(d.Stats.ByDeveloper) > 0 {
+				<h3>Developer Override Rates</h3>
+				<table>
+					<thead>
+						<tr>
+							<th>Developer</th>
+							<th>Confirms</th>
+							<th>Reverts</th>
+							<th>Override Rate</th>
+						</tr>
+					</thead>
+					<tbody>
+						for login, ds := range d.Stats.ByDeveloper {
+							<tr>
+								<td>{ "@" + login }</td>
+								<td>{ fmt.Sprintf("%d", ds.ConfirmCount) }</td>
+								<td>{ fmt.Sprintf("%d", ds.RevertCount) }</td>
+								<td class={ rateClass(ds.RevertCount, ds.ConfirmCount+ds.RevertCount) }>
+									{ revertRate(ds.RevertCount, ds.ConfirmCount+ds.RevertCount) }%
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		} else {
+			<p>No scan data yet. Install the GitHub App and open a pull request to get started.</p>
+		}
+
+		if len(d.RepoStatsList) > 0 {
+			<h3>Per-Repository Breakdown</h3>
+			<table>
+				<thead>
+					<tr>
+						<th>Repository</th>
+						<th>Scans</th>
+						<th>Capabilities</th>
+						<th>Confirms</th>
+						<th>Reverts</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, row := range d.RepoStatsList {
+						<tr>
+							<td><a href={ templ.SafeURL(fmt.Sprintf("/dashboard/repo?repo_id=%d", row.RepoID)) }>{ row.FullName }</a></td>
+							<td>{ fmt.Sprintf("%d", row.TotalScans) }</td>
+							<td>{ fmt.Sprintf("%d", row.TotalCaps) }</td>
+							<td>{ fmt.Sprintf("%d", row.ConfirmCount) }</td>
+							<td>{ fmt.Sprintf("%d", row.RevertCount) }</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+	}
+}
+
+// RepoDashboard renders the per-repo drill-down page.
+templ RepoDashboard(login, avatar, repoName string, stats *storage.RepoStats) {
+	@Page(repoName+" — Repo Dashboard", login, avatar) {
+		<hgroup>
+			<h2>{ repoName }</h2>
+			<p><a href="/dashboard">← Dashboard</a></p>
+		</hgroup>
+
+		if stats != nil {
+			<div class="stat-grid">
+				<div class="stat-card">
+					<div class="stat-value">{ fmt.Sprintf("%d", stats.TotalScans) }</div>
+					<div class="stat-label">Scans</div>
+				</div>
+				<div class="stat-card">
+					<div class="stat-value">{ fmt.Sprintf("%d", stats.TotalCaps) }</div>
+					<div class="stat-label">Capabilities</div>
+				</div>
+				<div class="stat-card">
+					<div class="stat-value">{ fmt.Sprintf("%d", stats.ConfirmCount) }</div>
+					<div class="stat-label">Confirmed</div>
+				</div>
+				<div class="stat-card">
+					<div class="stat-value">{ fmt.Sprintf("%d", stats.RevertCount) }</div>
+					<div class="stat-label">Reverted</div>
+				</div>
+			</div>
+
+			if len(stats.ByCategory) > 0 {
+				<h3>By Category</h3>
+				<table>
+					<thead>
+						<tr>
+							<th>Category</th>
+							<th>Detected</th>
+							<th>Confirmed</th>
+							<th>Reverted</th>
+						</tr>
+					</thead>
+					<tbody>
+						for cat, cs := range stats.ByCategory {
+							<tr>
+								<td>{ string(cat) }</td>
+								<td>{ fmt.Sprintf("%d", cs.TotalDetected) }</td>
+								<td>{ fmt.Sprintf("%d", cs.ConfirmCount) }</td>
+								<td>{ fmt.Sprintf("%d", cs.RevertCount) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+
+			if len(stats.ByDeveloper) > 0 {
+				<h3>By Developer</h3>
+				<table>
+					<thead>
+						<tr>
+							<th>Developer</th>
+							<th>Confirms</th>
+							<th>Reverts</th>
+						</tr>
+					</thead>
+					<tbody>
+						for dev, ds := range stats.ByDeveloper {
+							<tr>
+								<td>{ "@" + dev }</td>
+								<td>{ fmt.Sprintf("%d", ds.ConfirmCount) }</td>
+								<td>{ fmt.Sprintf("%d", ds.RevertCount) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		} else {
+			<p>No data yet for this repository.</p>
+		}
+	}
+}
+
+func confirmRate(confirms, total int) string {
+	if total == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%d", confirms*100/total)
+}
+
+func revertRate(reverts, total int) string {
+	if total == 0 {
+		return "0"
+	}
+	return fmt.Sprintf("%d", reverts*100/total)
+}
+
+func rateClass(reverts, total int) string {
+	if total == 0 {
+		return "rate-green"
+	}
+	pct := reverts * 100 / total
+	switch {
+	case pct < 30:
+		return "rate-green"
+	case pct < 50:
+		return "rate-yellow"
+	default:
+		return "rate-red"
+	}
+}

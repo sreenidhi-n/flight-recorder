@@ -1,0 +1,41 @@
+package templates
+
+// Page renders the full HTML shell with Pico CSS, HTMX, and TASS header.
+// login is the GitHub username ("" when unauthenticated).
+// avatar is the GitHub avatar URL.
+templ Page(title, login, avatar string) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="auto">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ title } — TASS</title>
+			<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"/>
+			<link rel="stylesheet" href="/static/style.css"/>
+			<script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+		</head>
+		<body>
+			<header class="tass-header">
+				<a href="/" class="logo">🔍 TASS</a>
+				<nav class="user-info">
+					if login != "" {
+						<a href="/dashboard">Dashboard</a>
+						<img src={ avatar } alt={ login } class="avatar" referrerpolicy="no-referrer"/>
+						<span>{ "@" + login }</span>
+						<form method="post" action="/auth/logout" style="margin:0">
+							<button class="outline secondary" type="submit" style="padding:0.2rem 0.6rem;font-size:0.8rem">Logout</button>
+						</form>
+					} else {
+						<a href="/auth/github" role="button" class="outline">Sign in with GitHub</a>
+					}
+				</nav>
+			</header>
+			<main>
+				{ children... }
+			</main>
+			<footer style="text-align:center;margin-top:3rem;padding:1rem 0;font-size:0.8rem;color:var(--pico-secondary)">
+				<a href="https://github.com/tass-security/tass" target="_blank">TASS</a> — Trusted AI Security Scanner
+			</footer>
+		</body>
+	</html>
+}

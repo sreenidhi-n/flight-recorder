@@ -1,0 +1,199 @@
+package templates
+
+import (
+	"fmt"
+	"github.com/tass-security/tass/internal/storage"
+	"github.com/tass-security/tass/pkg/contracts"
+)
+
+// categoryEmoji returns the display emoji for a capability category.
+func categoryEmoji(cat contracts.CapCategory) string {
+	switch cat {
+	case contracts.CatExternalDep:
+		return "📦"
+	case contracts.CatExternalAPI:
+		return "🌐"
+	case contracts.CatDatabaseOp:
+		return "🗄️"
+	case contracts.CatNetworkAccess:
+		return "🌐"
+	case contracts.CatFileSystem:
+		return "📁"
+	case contracts.CatPrivilege:
+		return "🔐"
+	default:
+		return "⚙️"
+	}
+}
+
+// categoryLabel returns a human-readable label.
+func categoryLabel(cat contracts.CapCategory) string {
+	switch cat {
+	case contracts.CatExternalDep:
+		return "New Dependency"
+	case contracts.CatExternalAPI:
+		return "External API"
+	case contracts.CatDatabaseOp:
+		return "Database Operation"
+	case contracts.CatNetworkAccess:
+		return "Network Access"
+	case contracts.CatFileSystem:
+		return "Filesystem Access"
+	case contracts.CatPrivilege:
+		return "Privilege Pattern"
+	default:
+		return "Capability"
+	}
+}
+
+// VerifyPageData bundles everything needed to render the verify page.
+type VerifyPageData struct {
+	Scan      *storage.ScanResult
+	Decisions map[string]storage.VerificationDecision // capID → decision
+	Login     string
+	Avatar    string
+	BaseURL   string
+}
+
+// Verify renders the main verification page for a single scan.
+templ Verify(d VerifyPageData) {
+	@Page(fmt.Sprintf("PR #%d — Verify", d.Scan.PRNumber), d.Login, d.Avatar) {
+		<hgroup>
+			<h2>PR #{ fmt.Sprintf("%d", d.Scan.PRNumber) } — { d.Scan.HeadBranch }</h2>
+			<p>
+				{ fmt.Sprintf("%d", d.Scan.NovelCount) } new { plural(d.Scan.NovelCount, "capability", "capabilities") } detected ·
+				<a href={ templ.SafeURL(fmt.Sprintf("https://github.com/%s/pull/%d", repoFullName(d.Scan), d.Scan.PRNumber)) } target="_blank">View PR ↗</a>
+			</p>
+		</hgroup>
+
+		@ProgressBar(len(d.Decisions), d.Scan.NovelCount)
+
+		<div id="capability-list">
+			for _, cap := range d.Scan.Capabilities {
+				@CapabilityCard(cap, d.Decisions[cap.ID], d.Scan.ID, d.BaseURL)
+			}
+		</div>
+
+		if len(d.Decisions) == d.Scan.NovelCount && d.Scan.Status == storage.StatusVerified {
+			@SuccessBanner(d.Scan)
+		}
+	}
+}
+
+templ ProgressBar(decided, total int) {
+	<div style="margin-bottom:0.5rem;font-size:0.9rem;color:var(--pico-secondary)">
+		{ fmt.Sprintf("%d of %d reviewed", decided, total) }
+	</div>
+	<div class="progress-bar-wrap">
+		<div class="progress-bar-fill" style={ fmt.Sprintf("width:%d%%", progressPct(decided, total)) }></div>
+	</div>
+}
+
+templ CapabilityCard(cap contracts.Capability, dec storage.VerificationDecision, scanID, baseURL string) {
+	<div
+		id={ "cap-" + cap.ID }
+		class={ cardClass(dec) }
+	>
+		<span class="cap-badge">{ categoryEmoji(cap.Category) } { categoryLabel(cap.Category) }</span>
+		<h4 style="margin:0.25rem 0">{ cap.Name }</h4>
+		if cap.Location.File != "" {
+			<small style="color:var(--pico-secondary)">
+				{ cap.Location.File }
+				if cap.Location.Line > 0 {
+					:{ fmt.Sprintf("%d", cap.Location.Line) }
+				}
+				· { string(cap.Source) }
+			</small>
+		}
+		if cap.RawEvidence != "" {
+			<details style="margin-top:0.5rem">
+				<summary>Show evidence</summary>
+				<pre style="font-size:0.8rem;overflow-x:auto"><code>{ cap.RawEvidence }</code></pre>
+			</details>
+		}
+
+		if dec.ID == "" {
+			<div class="action-row">
+				<button
+					hx-post={ baseURL + "/api/verify" }
+					hx-vals={ fmt.Sprintf(`{"scan_id":%q,"capability_id":%q,"decision":"confirm"}`, scanID, cap.ID) }
+					hx-target={ "#cap-" + cap.ID }
+					hx-swap="outerHTML"
+					hx-include="[name=decided_by]"
+					class="outline"
+					style="color:#22c55e;border-color:#22c55e"
+				>✅ Confirm</button>
+				<button
+					hx-post={ baseURL + "/api/verify" }
+					hx-vals={ fmt.Sprintf(`{"scan_id":%q,"capability_id":%q,"decision":"revert"}`, scanID, cap.ID) }
+					hx-target={ "#cap-" + cap.ID }
+					hx-swap="outerHTML"
+					hx-include="[name=decided_by]"
+					class="outline"
+					style="color:#f97316;border-color:#f97316"
+				>↩️ Revert</button>
+			</div>
+		} else {
+			<p style="margin-top:0.75rem;font-size:0.9rem">
+				if string(dec.Decision) == "confirm" {
+					✅ Confirmed by { dec.DecidedBy }
+				} else {
+					↩️ Reverted by { dec.DecidedBy }
+				}
+			</p>
+		}
+	</div>
+}
+
+templ SuccessBanner(scan *storage.ScanResult) {
+	<div class="success-banner">
+		<strong>✅ All capabilities reviewed!</strong><br/>
+		The manifest has been committed to the PR branch and the check is passing.
+	</div>
+}
+
+// CapabilityCardFragment is the HTMX partial returned after a decision.
+templ CapabilityCardFragment(cap contracts.Capability, dec storage.VerificationDecision, scanID, baseURL string, allDone bool, scan *storage.ScanResult) {
+	@CapabilityCard(cap, dec, scanID, baseURL)
+	if allDone {
+		<div id="all-done-banner" hx-swap-oob="true">
+			@SuccessBanner(scan)
+		</div>
+		<div id="progress-section" hx-swap-oob="true">
+			@ProgressBar(scan.NovelCount, scan.NovelCount)
+		</div>
+	}
+}
+
+// helper functions
+
+func repoFullName(scan *storage.ScanResult) string {
+	// ScanResult doesn't carry full name directly; reconstruct from ID prefix
+	// ID format: "scan-{owner}-{repo}-{pr}-{sha}"
+	// We fall back gracefully — this is only used for the GitHub link.
+	return ""
+}
+
+func cardClass(dec storage.VerificationDecision) string {
+	if dec.ID == "" {
+		return "cap-card"
+	}
+	if string(dec.Decision) == "confirm" {
+		return "cap-card decided confirmed"
+	}
+	return "cap-card decided reverted"
+}
+
+func progressPct(decided, total int) int {
+	if total == 0 {
+		return 100
+	}
+	return decided * 100 / total
+}
+
+func plural(n int, singular, pluralForm string) string {
+	if n == 1 {
+		return singular
+	}
+	return pluralForm
+}

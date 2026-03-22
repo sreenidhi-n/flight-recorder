@@ -1,0 +1,31 @@
+package templates
+
+// Index is the landing page — shown to unauthenticated visitors.
+templ Index() {
+	@Page("Welcome", "", "") {
+		<hgroup style="text-align:center;padding:3rem 0 2rem">
+			<h1>🔍 TASS</h1>
+			<p>Trusted AI Security Scanner — automatic capability detection for AI-generated code.</p>
+		</hgroup>
+		<section style="text-align:center">
+			<p>
+				TASS scans every pull request for new capabilities introduced by your code —
+				HTTP clients, database writes, filesystem access, new dependencies — and surfaces
+				them for developer review before merge.
+			</p>
+			<p><strong>Nobody installs anything. The GitHub App is the product.</strong></p>
+			<a href="/auth/github" role="button">Install the GitHub App →</a>
+		</section>
+		<hr/>
+		<section>
+			<h3>How it works</h3>
+			<ol>
+				<li><strong>Install</strong> — team lead adds the GitHub App in 30 seconds.</li>
+				<li><strong>Open a PR</strong> — TASS scans automatically, posts a comment listing new capabilities.</li>
+				<li><strong>Review</strong> — click the link in the comment, land on this hosted UI.</li>
+				<li><strong>Decide</strong> — Confirm what you intended, Revert what you didn't.</li>
+				<li><strong>Done</strong> — TASS commits the updated manifest, the check goes green.</li>
+			</ol>
+		</section>
+	}
+}
