@@ -1,0 +1,7 @@
+category: network_access
+name: "HTTP client outbound request"
+confidence: 0.95
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:go:net/http:client:Post
+cap_id: "net/http:client"
+symbol_capture: "method"
