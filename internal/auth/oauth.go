@@ -107,7 +107,7 @@ func (h *OAuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OAuthHandler) callbackURL() string {
-	return h.cfg.BaseURL + "/auth/github/callback"
+	return strings.TrimRight(h.cfg.BaseURL, "/") + "/auth/github/callback"
 }
 
 type githubUser struct {

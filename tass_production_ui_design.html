@@ -1,0 +1,307 @@
+<div style="padding: 0.5rem 0;">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#FFFFFF;--bg2:#F8F8F6;--bg3:#F1EFE8;--fg:#1A1A1A;--fg2:#6B6B68;--fg3:#9A9A96;--border:#E4E2DC;--accent:#185FA5;--accent-bg:#E6F1FB;--accent-fg:#0C447C;--green:#1D9E75;--green-bg:#E1F5EE;--green-fg:#085041;--orange:#D85A30;--orange-bg:#FAECE7;--orange-fg:#712B13;--red:#E24B4A;--red-bg:#FCEBEB;--red-fg:#791F1F;--purple-bg:#EEEDFE;--purple-fg:#3C3489;--radius:8px;--radius-lg:12px;--mono:'JetBrains Mono',ui-monospace,SFMono-Regular,monospace;--sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif}
+@media(prefers-color-scheme:dark){:root{--bg:#1A1A1A;--bg2:#222220;--bg3:#2C2C2A;--fg:#E8E6E0;--fg2:#9A9A96;--fg3:#6B6B68;--border:#3A3A38;--accent:#85B7EB;--accent-bg:#042C53;--accent-fg:#B5D4F4;--green:#5DCAA5;--green-bg:#04342C;--green-fg:#9FE1CB;--orange:#F0997B;--orange-bg:#4A1B0C;--orange-fg:#F5C4B3;--red:#F09595;--red-bg:#501313;--red-fg:#F7C1C1;--purple-bg:#26215C;--purple-fg:#CECBF6}}
+body,html{font-family:var(--sans);color:var(--fg);font-size:15px;line-height:1.6;background:transparent}
+
+.shell{max-width:1040px;margin:0 auto}
+.nav-tabs{display:flex;gap:2px;border-bottom:0.5px solid var(--border);margin-bottom:0}
+.nav-tab{padding:10px 20px;font-size:13px;font-weight:500;color:var(--fg2);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent;transition:all .15s}
+.nav-tab:hover{color:var(--fg)}
+.nav-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.screen{display:none}
+.screen.active{display:block}
+
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:16px 0;border-bottom:0.5px solid var(--border);margin-bottom:24px}
+.topbar-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--fg)}
+.topbar-brand svg{width:22px;height:22px}
+.topbar-brand span{font-weight:600;font-size:15px;letter-spacing:-.02em}
+.topbar-right{display:flex;align-items:center;gap:16px;font-size:13px;color:var(--fg2)}
+.topbar-right a{color:var(--fg2);text-decoration:none}
+.topbar-right a:hover{color:var(--fg)}
+.avatar{width:26px;height:26px;border-radius:50%;background:var(--accent-bg);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:var(--accent-fg)}
+
+.page-header{margin-bottom:24px}
+.page-header h2{font-size:20px;font-weight:600;letter-spacing:-.02em;margin-bottom:4px}
+.page-header p{font-size:13px;color:var(--fg2)}
+.page-header a{color:var(--accent);text-decoration:none}
+
+.progress-wrap{margin-bottom:28px}
+.progress-label{font-size:12px;color:var(--fg2);margin-bottom:6px;font-weight:500}
+.progress-track{height:4px;background:var(--bg3);border-radius:2px;overflow:hidden}
+.progress-fill{height:4px;background:var(--accent);border-radius:2px;transition:width .4s ease}
+
+.cap-card{border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:12px;background:var(--bg);transition:border-color .15s}
+.cap-card:hover{border-color:var(--fg3)}
+.cap-card.decided{opacity:.55}
+.cap-card.confirmed{border-left:3px solid var(--green)}
+.cap-card.reverted{border-left:3px solid var(--orange)}
+.cap-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.cap-left{flex:1;min-width:0}
+.cap-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;padding:3px 10px;border-radius:20px;margin-bottom:8px}
+.cap-badge.dep{background:var(--purple-bg);color:var(--purple-fg)}
+.cap-badge.net{background:var(--accent-bg);color:var(--accent-fg)}
+.cap-badge.db{background:var(--orange-bg);color:var(--orange-fg)}
+.cap-badge.fs{background:var(--green-bg);color:var(--green-fg)}
+.cap-badge.priv{background:var(--red-bg);color:var(--red-fg)}
+.cap-name{font-size:15px;font-weight:500;margin-bottom:4px}
+.cap-loc{font-family:var(--mono);font-size:12px;color:var(--fg2)}
+.cap-evidence{font-family:var(--mono);font-size:12px;color:var(--fg3);background:var(--bg2);padding:8px 12px;border-radius:6px;margin-top:10px;overflow-x:auto;white-space:pre;border:0.5px solid var(--border)}
+.cap-actions{display:flex;gap:8px;flex-shrink:0;align-items:flex-start;padding-top:4px}
+.btn{padding:7px 16px;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;border:0.5px solid var(--border);background:var(--bg);color:var(--fg);transition:all .12s}
+.btn:hover{background:var(--bg2)}
+.btn:active{transform:scale(.98)}
+.btn-confirm{color:var(--green);border-color:var(--green)}
+.btn-confirm:hover{background:var(--green-bg)}
+.btn-revert{color:var(--orange);border-color:var(--orange)}
+.btn-revert:hover{background:var(--orange-bg)}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn-primary:hover{opacity:.9}
+.decided-label{font-size:13px;color:var(--fg2);display:flex;align-items:center;gap:6px;padding-top:4px}
+
+.success-banner{background:var(--green-bg);border:0.5px solid var(--green);border-radius:var(--radius-lg);padding:16px 24px;margin-bottom:24px;display:flex;align-items:center;gap:12px}
+.success-banner strong{color:var(--green-fg);font-size:14px}
+.success-banner p{color:var(--green-fg);font-size:13px;margin:0}
+
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:32px}
+.stat-card{background:var(--bg2);border-radius:var(--radius);padding:16px 20px}
+.stat-val{font-size:28px;font-weight:600;letter-spacing:-.03em;line-height:1}
+.stat-label{font-size:12px;color:var(--fg2);margin-top:4px;font-weight:500}
+
+.section-title{font-size:14px;font-weight:600;margin-bottom:12px;color:var(--fg)}
+.table-wrap{border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:28px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 16px;background:var(--bg2);font-weight:500;color:var(--fg2);font-size:12px;text-transform:uppercase;letter-spacing:.04em;border-bottom:0.5px solid var(--border)}
+td{padding:10px 16px;border-bottom:0.5px solid var(--border)}
+tr:last-child td{border-bottom:none}
+td a{color:var(--accent);text-decoration:none}
+.rate-ok{color:var(--green)}
+.rate-warn{color:var(--orange)}
+.rate-bad{color:var(--red)}
+.status-pill{display:inline-block;font-size:11px;font-weight:500;padding:2px 10px;border-radius:20px}
+.status-pending{background:var(--orange-bg);color:var(--orange-fg)}
+.status-verified{background:var(--green-bg);color:var(--green-fg)}
+
+.landing-hero{text-align:center;padding:48px 0 40px}
+.landing-hero h1{font-size:36px;font-weight:700;letter-spacing:-.04em;line-height:1.15;margin-bottom:12px}
+.landing-hero h1 em{font-style:normal;color:var(--accent)}
+.landing-hero p{font-size:16px;color:var(--fg2);max-width:540px;margin:0 auto 28px}
+.landing-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:40px 0}
+.step-card{background:var(--bg2);border-radius:var(--radius-lg);padding:24px;text-align:left}
+.step-num{font-size:11px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.step-card h3{font-size:15px;font-weight:600;margin-bottom:6px}
+.step-card p{font-size:13px;color:var(--fg2);line-height:1.5}
+
+.pr-comment{background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:20px 24px;margin:32px auto;max-width:600px;text-align:left;font-size:13px}
+.pr-comment h4{font-size:14px;font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.pr-comment table{font-size:12px;margin-bottom:12px}
+.pr-comment td,.pr-comment th{padding:6px 12px;text-align:left}
+.pr-comment .pr-link{display:inline-block;margin-top:8px;color:var(--accent);font-weight:500;text-decoration:none}
+
+.footer-bar{text-align:center;padding:24px 0;font-size:12px;color:var(--fg3);border-top:0.5px solid var(--border);margin-top:32px}
+</style>
+
+<div class="shell">
+<div class="nav-tabs">
+  <button class="nav-tab active" onclick="showScreen('verify')">Verify page</button>
+  <button class="nav-tab" onclick="showScreen('dashboard')">Dashboard</button>
+  <button class="nav-tab" onclick="showScreen('landing')">Landing page</button>
+</div>
+
+<!-- ==================== VERIFY PAGE ==================== -->
+<div id="screen-verify" class="screen active">
+<div class="topbar">
+  <a class="topbar-brand" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg><span>TASS</span></a>
+  <div class="topbar-right"><a href="#">Dashboard</a><div class="avatar">SN</div><span>@sreenidhi</span></div>
+</div>
+
+<div class="page-header">
+  <h2>PR #47 — feat/add-payment-gateway</h2>
+  <p>4 new capabilities detected · acme-corp/payments-service · <a href="#">View PR on GitHub ↗</a></p>
+</div>
+
+<div class="progress-wrap">
+  <div class="progress-label">2 of 4 reviewed</div>
+  <div class="progress-track"><div class="progress-fill" style="width:50%"></div></div>
+</div>
+
+<div class="cap-card confirmed decided">
+  <div class="cap-row">
+    <div class="cap-left">
+      <div class="cap-badge dep">New dependency</div>
+      <div class="cap-name">stripe-go v76.0.0</div>
+      <div class="cap-loc">go.mod · Layer 0 dep diff</div>
+    </div>
+    <div class="decided-label"><svg width="14" height="14" viewBox="0 0 16 16" fill="var(--green)"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.78 5.22a.75.75 0 00-1.06 0L7 8.94 5.28 7.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.25-4.25a.75.75 0 000-1.06z"/></svg> Confirmed by @alice</div>
+  </div>
+</div>
+
+<div class="cap-card reverted decided">
+  <div class="cap-row">
+    <div class="cap-left">
+      <div class="cap-badge fs">Filesystem access</div>
+      <div class="cap-name">os.WriteFile</div>
+      <div class="cap-loc">internal/export.go:42 · Layer 1 AST</div>
+    </div>
+    <div class="decided-label"><svg width="14" height="14" viewBox="0 0 16 16" fill="var(--orange)"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zM5.72 5.72a.75.75 0 011.06 0L8 6.94l1.22-1.22a.75.75 0 111.06 1.06L9.06 8l1.22 1.22a.75.75 0 11-1.06 1.06L8 9.06l-1.22 1.22a.75.75 0 01-1.06-1.06L6.94 8 5.72 6.78a.75.75 0 010-1.06z"/></svg> Reverted by @alice</div>
+  </div>
+</div>
+
+<div class="cap-card">
+  <div class="cap-row">
+    <div class="cap-left">
+      <div class="cap-badge net">Network access</div>
+      <div class="cap-name">net/http.Post → api.stripe.com</div>
+      <div class="cap-loc">internal/payments/client.go:23 · Layer 1 AST · 95% confidence</div>
+      <div class="cap-evidence">resp, err := http.Post("https://api.stripe.com/v1/charges", ...)</div>
+    </div>
+    <div class="cap-actions">
+      <button class="btn btn-confirm">Confirm</button>
+      <button class="btn btn-revert">Revert</button>
+    </div>
+  </div>
+</div>
+
+<div class="cap-card">
+  <div class="cap-row">
+    <div class="cap-left">
+      <div class="cap-badge db">Database operation</div>
+      <div class="cap-name">sql.Open → postgres</div>
+      <div class="cap-loc">internal/payments/store.go:15 · Layer 1 AST · 95% confidence</div>
+      <div class="cap-evidence">db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))</div>
+    </div>
+    <div class="cap-actions">
+      <button class="btn btn-confirm">Confirm</button>
+      <button class="btn btn-revert">Revert</button>
+    </div>
+  </div>
+</div>
+
+<div class="footer-bar">TASS — Trusted AI Security Scanner</div>
+</div>
+
+<!-- ==================== DASHBOARD ==================== -->
+<div id="screen-dashboard" class="screen">
+<div class="topbar">
+  <a class="topbar-brand" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg><span>TASS</span></a>
+  <div class="topbar-right"><a href="#">Dashboard</a><div class="avatar">SN</div><span>@sreenidhi</span></div>
+</div>
+
+<div class="page-header">
+  <h2>Dashboard</h2>
+  <p>acme-corp · capability tracking overview</p>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card"><div class="stat-val">4</div><div class="stat-label">Repositories</div></div>
+  <div class="stat-card"><div class="stat-val">47</div><div class="stat-label">Total scans</div></div>
+  <div class="stat-card"><div class="stat-val">156</div><div class="stat-label">Capabilities detected</div></div>
+  <div class="stat-card"><div class="stat-val" style="color:var(--green)">72%</div><div class="stat-label">Confirm rate</div></div>
+</div>
+
+<div class="section-title">Recent scans</div>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Repository</th><th>PR</th><th>Capabilities</th><th>Status</th><th>When</th></tr></thead>
+<tbody>
+<tr><td><a href="#">acme-corp/payments-service</a></td><td>#47 feat/add-payment-gateway</td><td>4 new</td><td><span class="status-pill status-pending">Pending</span></td><td>2 hours ago</td></tr>
+<tr><td><a href="#">acme-corp/ai-support-bot</a></td><td>#31 feat/add-bedrock</td><td>6 new</td><td><span class="status-pill status-verified">Verified</span></td><td>Yesterday</td></tr>
+<tr><td><a href="#">acme-corp/payments-service</a></td><td>#45 fix/retry-logic</td><td>0 new</td><td><span class="status-pill status-verified">All clear</span></td><td>2 days ago</td></tr>
+<tr><td><a href="#">acme-corp/web-dashboard</a></td><td>#112 feat/analytics</td><td>3 new</td><td><span class="status-pill status-verified">Verified</span></td><td>3 days ago</td></tr>
+<tr><td><a href="#">acme-corp/ai-support-bot</a></td><td>#28 feat/mcp-server</td><td>5 new</td><td><span class="status-pill status-verified">Verified</span></td><td>5 days ago</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="section-title">Developer override rates</div>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Developer</th><th>Confirms</th><th>Reverts</th><th>Override rate</th></tr></thead>
+<tbody>
+<tr><td>@alice</td><td>45</td><td>12</td><td class="rate-ok">21%</td></tr>
+<tr><td>@bob</td><td>32</td><td>18</td><td class="rate-warn">36%</td></tr>
+<tr><td>@carol</td><td>14</td><td>19</td><td class="rate-bad">58%</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="section-title">By category</div>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Category</th><th>Detected</th><th>Confirmed</th><th>Reverted</th></tr></thead>
+<tbody>
+<tr><td><span class="cap-badge dep" style="margin:0">New dependency</span></td><td>68</td><td>60</td><td>8</td></tr>
+<tr><td><span class="cap-badge net" style="margin:0">Network access</span></td><td>42</td><td>28</td><td>14</td></tr>
+<tr><td><span class="cap-badge db" style="margin:0">Database</span></td><td>25</td><td>18</td><td>7</td></tr>
+<tr><td><span class="cap-badge fs" style="margin:0">Filesystem</span></td><td>15</td><td>6</td><td>9</td></tr>
+<tr><td><span class="cap-badge priv" style="margin:0">Privilege</span></td><td>6</td><td>0</td><td>6</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="footer-bar">TASS — Trusted AI Security Scanner</div>
+</div>
+
+<!-- ==================== LANDING PAGE ==================== -->
+<div id="screen-landing" class="screen">
+<div class="topbar">
+  <a class="topbar-brand" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg><span>TASS</span></a>
+  <div class="topbar-right"><button class="btn btn-primary" style="padding:6px 20px">Sign in with GitHub</button></div>
+</div>
+
+<div class="landing-hero">
+  <h1>Your AI writes code.<br/><em>TASS makes it accountable.</em></h1>
+  <p>Automatic capability detection for AI-generated code. Every new dependency, API call, and database write is flagged for explicit human review — before it ships.</p>
+  <button class="btn btn-primary" style="padding:10px 32px;font-size:15px">Install the GitHub App →</button>
+</div>
+
+<div class="pr-comment">
+  <h4><svg width="16" height="16" viewBox="0 0 16 16" fill="var(--accent)"><path d="M8 0a8 8 0 110 16A8 8 0 018 0z"/></svg> TASS — 3 new capabilities detected</h4>
+  <table>
+    <thead><tr><th>#</th><th>Capability</th><th>Category</th><th>File</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>stripe-go v76</td><td><span class="cap-badge dep" style="margin:0;font-size:10px">Dependency</span></td><td style="font-family:var(--mono);font-size:11px">go.mod</td></tr>
+      <tr><td>2</td><td>http.Post</td><td><span class="cap-badge net" style="margin:0;font-size:10px">Network</span></td><td style="font-family:var(--mono);font-size:11px">client.go:23</td></tr>
+      <tr><td>3</td><td>sql.Open</td><td><span class="cap-badge db" style="margin:0;font-size:10px">Database</span></td><td style="font-family:var(--mono);font-size:11px">store.go:15</td></tr>
+    </tbody>
+  </table>
+  <a class="pr-link" href="#">Review & verify on TASS →</a>
+</div>
+
+<div class="landing-steps">
+  <div class="step-card">
+    <div class="step-num">Step 01</div>
+    <h3>Install</h3>
+    <p>Add the GitHub App to your org. TASS opens a PR with your initial capability manifest. 30 seconds, zero config.</p>
+  </div>
+  <div class="step-card">
+    <div class="step-num">Step 02</div>
+    <h3>Review</h3>
+    <p>Every PR is scanned automatically. New capabilities appear as a comment with a link to the verification UI.</p>
+  </div>
+  <div class="step-card">
+    <div class="step-num">Step 03</div>
+    <h3>Decide</h3>
+    <p>Confirm what you intended. Revert what you didn't. TASS commits the manifest and the check goes green.</p>
+  </div>
+</div>
+
+<div style="text-align:center;padding:40px 0">
+  <p style="font-size:14px;color:var(--fg2);margin-bottom:6px">Machines state facts. Humans state intent.</p>
+  <p style="font-size:13px;color:var(--fg3)">TASS forces agreement between the two.</p>
+</div>
+
+<div class="footer-bar">TASS — Trusted AI Security Scanner</div>
+</div>
+</div>
+
+<script>
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('screen-'+id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</div>
