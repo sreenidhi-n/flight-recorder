@@ -1,0 +1,7 @@
+category: network_access
+name: "AWS SDK service connection via boto3"
+confidence: 0.95
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:boto3:client:client  or  ast:python:boto3:client:resource
+cap_id: "boto3:client"
+symbol_capture: "method"

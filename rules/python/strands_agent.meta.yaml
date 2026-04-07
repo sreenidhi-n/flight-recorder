@@ -1,0 +1,7 @@
+category: external_api
+name: "Strands AI agent instantiation"
+confidence: 0.9
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:strands:agent:Agent
+cap_id: "strands:agent"
+symbol_capture: "cls"

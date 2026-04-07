@@ -1,0 +1,7 @@
+category: network_access
+name: "OpenTelemetry tracing setup"
+confidence: 0.85
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:otel:tracing:TracerProvider  or  ast:python:otel:tracing:set_tracer_provider
+cap_id: "otel:tracing"
+symbol_capture: "func"

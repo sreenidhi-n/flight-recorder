@@ -39,13 +39,13 @@ func TestLoadRules_LoadsAll(t *testing.T) {
 		t.Logf("language %q: %d rules loaded", lang, len(langRules))
 	}
 
-	// Verify total rule count: 5 Go + 4 Python + 3 JS = 12
+	// Verify total rule count: 5 Go + 8 Python + 3 JS = 16
 	total := 0
 	for _, r := range rules {
 		total += len(r)
 	}
-	if total < 12 {
-		t.Errorf("total rules: got %d, want at least 12", total)
+	if total < 16 {
+		t.Errorf("total rules: got %d, want at least 16", total)
 	}
 }
 
@@ -414,6 +414,224 @@ function greet(name) { return "Hello, " + name; }
 	}
 	if len(caps) != 0 {
 		t.Errorf("clean JS file: got %d capabilities, want 0: %v", len(caps), capIDs(caps))
+	}
+}
+
+// TestRules_Python_Boto3 verifies boto3.client() and boto3.resource() are detected.
+// Snippet mirrors the direct boto3 usage pattern from requirements.txt consumers.
+func TestRules_Python_Boto3(t *testing.T) {
+	src := []byte(`import boto3
+
+s3 = boto3.client('s3')
+dynamodb = boto3.resource('dynamodb')
+
+def upload_file(bucket, key, body):
+    s3.put_object(Bucket=bucket, Key=key, Body=body)
+`)
+	s := newScannerFromRules(t)
+	caps, err := s.ScanBytes(src, "aws_tools.py", "python")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+
+	ids := capIDs(caps)
+	if !ids["ast:python:boto3:client:client"] {
+		t.Errorf("missing ast:python:boto3:client:client; got: %v", keys(ids))
+	}
+	if !ids["ast:python:boto3:client:resource"] {
+		t.Errorf("missing ast:python:boto3:client:resource; got: %v", keys(ids))
+	}
+	for _, c := range caps {
+		if c.ID == "ast:python:boto3:client:client" || c.ID == "ast:python:boto3:client:resource" {
+			if c.Category != contracts.CatNetworkAccess {
+				t.Errorf("%s: Category=%q, want network_access", c.ID, c.Category)
+			}
+			if c.Confidence != 0.95 {
+				t.Errorf("%s: Confidence=%f, want 0.95", c.ID, c.Confidence)
+			}
+		}
+	}
+}
+
+// TestRules_Python_Boto3_NoBroadMatch verifies that unrelated attribute calls
+// (e.g. s3.put_object()) are NOT matched by the boto3 rule.
+func TestRules_Python_Boto3_NoBroadMatch(t *testing.T) {
+	src := []byte(`import boto3
+
+s3 = boto3.client('s3')
+s3.put_object(Bucket='bucket', Key='k', Body=b'data')
+s3.get_object(Bucket='bucket', Key='k')
+`)
+	s := newScannerFromRules(t)
+	caps, err := s.ScanBytes(src, "s3.py", "python")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+	// Only boto3.client() should match — put_object/get_object are s3.* calls, not boto3.*
+	ids := capIDs(caps)
+	if ids["ast:python:boto3:client:put_object"] {
+		t.Error("s3.put_object() should NOT match boto3 rule (false positive)")
+	}
+	if ids["ast:python:boto3:client:get_object"] {
+		t.Error("s3.get_object() should NOT match boto3 rule (false positive)")
+	}
+}
+
+// TestRules_Python_StrandsAgent verifies Agent() instantiation is detected.
+// Snippet is drawn from workshop/module_01_first_agent/agent.py.
+func TestRules_Python_StrandsAgent(t *testing.T) {
+	src := []byte(`from strands import Agent
+from shared.model import model
+
+SYSTEM_PROMPT = "You are SupportBot, a helpful customer support agent."
+
+agent = Agent(system_prompt=SYSTEM_PROMPT, model=model)
+`)
+	s := newScannerFromRules(t)
+	caps, err := s.ScanBytes(src, "agent.py", "python")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+
+	ids := capIDs(caps)
+	if !ids["ast:python:strands:agent:Agent"] {
+		t.Errorf("missing ast:python:strands:agent:Agent; got: %v", keys(ids))
+	}
+	for _, c := range caps {
+		if c.ID == "ast:python:strands:agent:Agent" {
+			if c.Category != contracts.CatExternalAPI {
+				t.Errorf("%s: Category=%q, want external_api", c.ID, c.Category)
+			}
+			if c.Confidence != 0.9 {
+				t.Errorf("%s: Confidence=%f, want 0.9", c.ID, c.Confidence)
+			}
+		}
+	}
+}
+
+// TestRules_Python_StrandsAgent_MultiAgent verifies that multiple Agent()
+// calls in the same file (workshop/module_04_multi_agent style) deduplicate to one capability.
+func TestRules_Python_StrandsAgent_MultiAgent(t *testing.T) {
+	src := []byte(`from strands import Agent
+from shared.model import model
+
+order_agent = Agent(system_prompt="You handle orders.", model=model)
+catalog_agent = Agent(system_prompt="You handle catalog lookups.", model=model)
+triage_agent = Agent(system_prompt="You triage requests.", model=model,
+                     tools=[order_agent, catalog_agent])
+`)
+	s := newScannerFromRules(t)
+	caps, err := s.ScanBytes(src, "triage_agent.py", "python")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+	// All three Agent() calls resolve to the same ID — deduplicated to exactly 1.
+	ids := capIDs(caps)
+	if !ids["ast:python:strands:agent:Agent"] {
+		t.Errorf("missing ast:python:strands:agent:Agent; got: %v", keys(ids))
+	}
+	if len(ids) > 1 {
+		// Should only have the one strands cap (plus any from open_file if used, but we don't here)
+		for id := range ids {
+			if id != "ast:python:strands:agent:Agent" {
+				t.Logf("note: additional capability detected: %s", id)
+			}
+		}
+	}
+	count := 0
+	for _, c := range caps {
+		if c.ID == "ast:python:strands:agent:Agent" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("Agent() deduplication: got %d occurrences of strands:agent:Agent, want 1", count)
+	}
+}
+
+// TestRules_Python_FastMCP verifies FastMCP() constructor and @mcp.tool() decorator are detected.
+// Snippet is drawn from workshop/module_02_tools_mcp/mcp_server.py.
+func TestRules_Python_FastMCP(t *testing.T) {
+	src := []byte(`from fastmcp import FastMCP
+
+mcp = FastMCP(
+    name="TechStore Catalog Server",
+    instructions="MCP server providing access to TechStore's product catalog.",
+)
+
+@mcp.tool()
+def get_product_details(sku: str) -> dict:
+    """Get detailed information about a product by SKU."""
+    return {"sku": sku, "name": "Widget"}
+
+@mcp.tool()
+def list_all_products(category: str = "") -> list:
+    """List all products."""
+    return []
+
+@mcp.resource("catalog://categories")
+def list_categories() -> str:
+    """List all available product categories."""
+    return "Electronics, Furniture"
+`)
+	s := newScannerFromRules(t)
+	caps, err := s.ScanBytes(src, "mcp_server.py", "python")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+
+	ids := capIDs(caps)
+	if !ids["ast:python:fastmcp:server:FastMCP"] {
+		t.Errorf("missing ast:python:fastmcp:server:FastMCP; got: %v", keys(ids))
+	}
+	if !ids["ast:python:fastmcp:server:tool"] {
+		t.Errorf("missing ast:python:fastmcp:server:tool; got: %v", keys(ids))
+	}
+	if !ids["ast:python:fastmcp:server:resource"] {
+		t.Errorf("missing ast:python:fastmcp:server:resource; got: %v", keys(ids))
+	}
+	for _, c := range caps {
+		if c.Category != contracts.CatNetworkAccess {
+			t.Errorf("%s: Category=%q, want network_access", c.ID, c.Category)
+		}
+	}
+}
+
+// TestRules_Python_OpenTelemetry verifies TracerProvider() and set_tracer_provider() are detected.
+// Snippet mirrors the opentelemetry-sdk setup pattern from the workshop requirements.
+func TestRules_Python_OpenTelemetry(t *testing.T) {
+	src := []byte(`from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+exporter = OTLPSpanExporter(endpoint="http://localhost:4317", insecure=True)
+provider = TracerProvider()
+provider.add_span_processor(BatchSpanProcessor(exporter))
+trace.set_tracer_provider(provider)
+`)
+	s := newScannerFromRules(t)
+	caps, err := s.ScanBytes(src, "telemetry.py", "python")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+
+	ids := capIDs(caps)
+	if !ids["ast:python:otel:tracing:TracerProvider"] {
+		t.Errorf("missing ast:python:otel:tracing:TracerProvider; got: %v", keys(ids))
+	}
+	if !ids["ast:python:otel:tracing:set_tracer_provider"] {
+		t.Errorf("missing ast:python:otel:tracing:set_tracer_provider; got: %v", keys(ids))
+	}
+	for _, c := range caps {
+		if c.ID == "ast:python:otel:tracing:TracerProvider" || c.ID == "ast:python:otel:tracing:set_tracer_provider" {
+			if c.Category != contracts.CatNetworkAccess {
+				t.Errorf("%s: Category=%q, want network_access", c.ID, c.Category)
+			}
+			if c.Confidence != 0.85 {
+				t.Errorf("%s: Confidence=%f, want 0.85", c.ID, c.Confidence)
+			}
+		}
 	}
 }
 

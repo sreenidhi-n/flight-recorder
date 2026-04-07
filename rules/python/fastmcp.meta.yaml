@@ -1,0 +1,7 @@
+category: network_access
+name: "FastMCP server or tool registration"
+confidence: 0.9
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:fastmcp:server:FastMCP  or  ast:python:fastmcp:server:tool
+cap_id: "fastmcp:server"
+symbol_capture: "cls"

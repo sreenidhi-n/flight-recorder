@@ -91,8 +91,9 @@ type ScanResult struct {
 	Capabilities   []contracts.Capability
 	NovelCount     int
 	Status         ScanStatus
-	CheckRunID     int64 // GitHub Check Run ID for updating check status
-	CommentID      int64 // GitHub PR Comment ID for updating the comment
+	CheckRunID     int64  // GitHub Check Run ID for updating check status
+	CommentID      int64  // GitHub PR Comment ID for updating the comment
+	FullName       string // e.g. "owner/repo" — joined from repositories
 }
 
 type VerificationDecision struct {
@@ -321,23 +322,29 @@ func (s *SQLiteStore) SaveScan(ctx context.Context, scan ScanResult) error {
 
 func (s *SQLiteStore) GetScan(ctx context.Context, id string) (*ScanResult, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, repo_id, COALESCE(installation_id,0), pr_number, COALESCE(head_branch,''),
-		       commit_sha, base_sha, scanned_at,
-		       scan_duration_ms, capabilities_json, novel_count, status,
-		       COALESCE(check_run_id,0), COALESCE(comment_id,0)
-		FROM scan_results WHERE id = ?
+		SELECT sr.id, sr.repo_id, COALESCE(sr.installation_id,0), sr.pr_number, COALESCE(sr.head_branch,''),
+		       sr.commit_sha, sr.base_sha, sr.scanned_at,
+		       sr.scan_duration_ms, sr.capabilities_json, sr.novel_count, sr.status,
+		       COALESCE(sr.check_run_id,0), COALESCE(sr.comment_id,0),
+		       COALESCE(r.full_name,'')
+		FROM scan_results sr
+		LEFT JOIN repositories r ON r.id = sr.repo_id
+		WHERE sr.id = ?
 	`, id)
 	return scanScanResult(row)
 }
 
 func (s *SQLiteStore) GetScansByRepo(ctx context.Context, repoID int64, limit int) ([]ScanResult, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, repo_id, COALESCE(installation_id,0), pr_number, COALESCE(head_branch,''),
-		       commit_sha, base_sha, scanned_at,
-		       scan_duration_ms, capabilities_json, novel_count, status,
-		       COALESCE(check_run_id,0), COALESCE(comment_id,0)
-		FROM scan_results WHERE repo_id = ?
-		ORDER BY scanned_at DESC LIMIT ?
+		SELECT sr.id, sr.repo_id, COALESCE(sr.installation_id,0), sr.pr_number, COALESCE(sr.head_branch,''),
+		       sr.commit_sha, sr.base_sha, sr.scanned_at,
+		       sr.scan_duration_ms, sr.capabilities_json, sr.novel_count, sr.status,
+		       COALESCE(sr.check_run_id,0), COALESCE(sr.comment_id,0),
+		       COALESCE(r.full_name,'')
+		FROM scan_results sr
+		LEFT JOIN repositories r ON r.id = sr.repo_id
+		WHERE sr.repo_id = ?
+		ORDER BY sr.scanned_at DESC LIMIT ?
 	`, repoID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("storage: get scans by repo %d: %w", repoID, err)
@@ -375,7 +382,7 @@ func scanScanResult(row scanner) (*ScanResult, error) {
 	err := row.Scan(&sr.ID, &sr.RepoID, &sr.InstallationID, &sr.PRNumber, &sr.HeadBranch,
 		&sr.CommitSHA, &sr.BaseSHA,
 		&scannedAt, &sr.ScanDurationMS, &capsJSON, &sr.NovelCount, &status,
-		&sr.CheckRunID, &sr.CommentID)
+		&sr.CheckRunID, &sr.CommentID, &sr.FullName)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

@@ -12,10 +12,11 @@ import (
 	"strings"
 
 	"github.com/a-h/templ"
-	gh "github.com/tass-security/tass/internal/github"
 	"github.com/tass-security/tass/internal/auth"
+	gh "github.com/tass-security/tass/internal/github"
 	"github.com/tass-security/tass/internal/storage"
 	"github.com/tass-security/tass/internal/ui/templates"
+	"github.com/tass-security/tass/pkg/contracts"
 )
 
 //go:embed static/*
@@ -102,11 +103,12 @@ func (h *VerifyPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := templates.VerifyPageData{
-		Scan:      scan,
-		Decisions: decMap,
-		Login:     sess.GitHubLogin,
-		Avatar:    sess.AvatarURL,
-		BaseURL:   h.baseURL,
+		Scan:         scan,
+		Decisions:    decMap,
+		Login:        sess.GitHubLogin,
+		Avatar:       sess.AvatarURL,
+		BaseURL:      h.baseURL,
+		RepoFullName: scan.FullName,
 	}
 	render(w, r, http.StatusOK, templates.Verify(data))
 }
@@ -230,6 +232,86 @@ func (h *SetupHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Repos list comes from query param (set by the installation webhook redirect)
 	render(w, r, http.StatusOK, templates.Setup(login, avatar, orgName, nil))
+}
+
+// UIVerifyHandler handles POST /ui/verify — the HTMX verify endpoint.
+// Accepts form data (not JSON) and returns HTML (CapabilityCardFragment).
+type UIVerifyHandler struct {
+	verifier *gh.Verifier
+	store    storage.Store
+	sessions *auth.SessionStore
+	baseURL  string
+}
+
+func NewUIVerifyHandler(verifier *gh.Verifier, store storage.Store, sessions *auth.SessionStore, baseURL string) *UIVerifyHandler {
+	return &UIVerifyHandler{verifier: verifier, store: store, sessions: sessions, baseURL: baseURL}
+}
+
+func (h *UIVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	scanID := r.FormValue("scan_id")
+	capID := r.FormValue("capability_id")
+	decisionStr := r.FormValue("decision")
+
+	if scanID == "" || capID == "" {
+		http.Error(w, "scan_id and capability_id required", http.StatusBadRequest)
+		return
+	}
+	if decisionStr != "confirm" && decisionStr != "revert" {
+		http.Error(w, `decision must be "confirm" or "revert"`, http.StatusBadRequest)
+		return
+	}
+
+	decidedBy := "anonymous"
+	if sess := auth.SessionFromStore(h.sessions, r); sess != nil {
+		decidedBy = sess.GitHubLogin
+	}
+
+	decision := contracts.DecisionConfirm
+	if decisionStr == "revert" {
+		decision = contracts.DecisionRevert
+	}
+
+	result, err := h.verifier.Decide(r.Context(), scanID, capID, decision, "", decidedBy)
+	if err != nil {
+		slog.Error("ui verify: decide", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	ctx := r.Context()
+	scan, err := h.store.GetScan(ctx, scanID)
+	if err != nil || scan == nil {
+		http.Error(w, "scan not found", http.StatusNotFound)
+		return
+	}
+
+	var cap contracts.Capability
+	for _, c := range scan.Capabilities {
+		if c.ID == capID {
+			cap = c
+			break
+		}
+	}
+
+	decisions, _ := h.store.GetDecisionsByScan(ctx, scanID)
+	var dec storage.VerificationDecision
+	for _, d := range decisions {
+		if d.CapabilityID == capID {
+			dec = d
+			break
+		}
+	}
+
+	render(w, r, http.StatusOK, templates.CapabilityCardFragment(cap, dec, scanID, h.baseURL, result.AllDecided, scan))
 }
 
 // --- render helper ---
