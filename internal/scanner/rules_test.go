@@ -477,9 +477,10 @@ s3.get_object(Bucket='bucket', Key='k')
 	}
 }
 
-// TestRules_Python_StrandsAgent verifies Agent() instantiation is detected.
+// TestRules_Python_StrandsAgent_ImportFrom verifies that `from strands import Agent`
+// is detected via the import boundary pattern (no bare Agent() matching).
 // Snippet is drawn from workshop/module_01_first_agent/agent.py.
-func TestRules_Python_StrandsAgent(t *testing.T) {
+func TestRules_Python_StrandsAgent_ImportFrom(t *testing.T) {
 	src := []byte(`from strands import Agent
 from shared.model import model
 
@@ -509,8 +510,45 @@ agent = Agent(system_prompt=SYSTEM_PROMPT, model=model)
 	}
 }
 
-// TestRules_Python_StrandsAgent_MultiAgent verifies that multiple Agent()
-// calls in the same file (workshop/module_04_multi_agent style) deduplicate to one capability.
+// TestRules_Python_StrandsAgent_QualifiedCall verifies strands.Agent(...) is detected.
+func TestRules_Python_StrandsAgent_QualifiedCall(t *testing.T) {
+	src := []byte(`import strands
+
+agent = strands.Agent(system_prompt="You are helpful.", model=None)
+`)
+	s := newScannerFromRules(t)
+	caps, err := s.ScanBytes(src, "agent_qualified.py", "python")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+	ids := capIDs(caps)
+	if !ids["ast:python:strands:agent:Agent"] {
+		t.Errorf("missing ast:python:strands:agent:Agent; got: %v", keys(ids))
+	}
+}
+
+// TestRules_Python_StrandsAgent_NoFalsePositive verifies that Agent() from
+// an unrelated library (e.g. langchain) does NOT match the Strands rule.
+func TestRules_Python_StrandsAgent_NoFalsePositive(t *testing.T) {
+	src := []byte(`from langchain.agents import Agent
+
+agent = Agent(llm=my_llm, tools=[])
+`)
+	s := newScannerFromRules(t)
+	caps, err := s.ScanBytes(src, "langchain_agent.py", "python")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+	for _, c := range caps {
+		if c.ID == "ast:python:strands:agent:Agent" {
+			t.Errorf("langchain Agent() should NOT match strands rule (false positive): got %s", c.ID)
+		}
+	}
+}
+
+// TestRules_Python_StrandsAgent_MultiAgent verifies that a file with multiple Agent()
+// calls still produces exactly one capability (via the single import statement).
+// Drawn from workshop/module_04_multi_agent style.
 func TestRules_Python_StrandsAgent_MultiAgent(t *testing.T) {
 	src := []byte(`from strands import Agent
 from shared.model import model
@@ -525,18 +563,10 @@ triage_agent = Agent(system_prompt="You triage requests.", model=model,
 	if err != nil {
 		t.Fatalf("ScanBytes: %v", err)
 	}
-	// All three Agent() calls resolve to the same ID — deduplicated to exactly 1.
+	// Import fires once → exactly 1 capability regardless of how many Agent() calls follow.
 	ids := capIDs(caps)
 	if !ids["ast:python:strands:agent:Agent"] {
 		t.Errorf("missing ast:python:strands:agent:Agent; got: %v", keys(ids))
-	}
-	if len(ids) > 1 {
-		// Should only have the one strands cap (plus any from open_file if used, but we don't here)
-		for id := range ids {
-			if id != "ast:python:strands:agent:Agent" {
-				t.Logf("note: additional capability detected: %s", id)
-			}
-		}
 	}
 	count := 0
 	for _, c := range caps {
@@ -545,7 +575,7 @@ triage_agent = Agent(system_prompt="You triage requests.", model=model,
 		}
 	}
 	if count != 1 {
-		t.Errorf("Agent() deduplication: got %d occurrences of strands:agent:Agent, want 1", count)
+		t.Errorf("strands:agent:Agent deduplication: got %d occurrences, want 1", count)
 	}
 }
 
