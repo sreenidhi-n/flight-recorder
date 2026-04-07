@@ -136,6 +136,7 @@ templ Dashboard(d DashboardData) {
 							<th>Capabilities</th>
 							<th>Confirms</th>
 							<th>Reverts</th>
+							<th></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -150,6 +151,11 @@ templ Dashboard(d DashboardData) {
 								<td>{ fmt.Sprintf("%d", row.TotalCaps) }</td>
 								<td>{ fmt.Sprintf("%d", row.ConfirmCount) }</td>
 								<td>{ fmt.Sprintf("%d", row.RevertCount) }</td>
+								<td>
+									<a href={ templ.SafeURL(fmt.Sprintf("/audit/%d", row.RepoID)) } style="font-size:12px">
+										Audit →
+									</a>
+								</td>
 							</tr>
 						}
 					</tbody>

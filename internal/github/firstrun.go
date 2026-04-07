@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 
 	"github.com/tass-security/tass/internal/scanner"
@@ -81,9 +82,20 @@ func (p *FirstRunPipeline) processRepo(ctx context.Context, installationID int64
 		return "", nil
 	}
 
-	// 3. Fetch dep files from the default branch and scan them.
+	// 3. Fetch dep files AND source files from the default branch and scan them.
 	depFiles := p.collectDepFiles(ctx, token, owner, repoName, meta.defaultBranch)
-	cs, _ := p.sc.ScanRemote(depFiles, nil)
+	sourceFiles := p.collectSourceFiles(ctx, token, owner, repoName, meta.headSHA)
+
+	// Merge into a single headFiles map for ScanRemote (Layer 0 + Layer 1).
+	headFiles := make(map[string][]byte, len(depFiles)+len(sourceFiles))
+	for k, v := range depFiles {
+		headFiles[k] = v
+	}
+	for k, v := range sourceFiles {
+		headFiles[k] = v
+	}
+
+	cs, _ := p.sc.ScanRemote(headFiles, nil)
 
 	var caps []contracts.Capability
 	if cs != nil {
@@ -156,6 +168,47 @@ func (p *FirstRunPipeline) collectDepFiles(ctx context.Context, token, owner, re
 		}
 		result[name] = fi.Content
 	}
+	return result
+}
+
+// collectSourceFiles fetches source files from the repo tree for Layer 1 AST scanning.
+// Uses the git tree API (recursive) and caps at 60 files to avoid excessive API calls
+// on large repositories.
+func (p *FirstRunPipeline) collectSourceFiles(ctx context.Context, token, owner, repoName, sha string) map[string][]byte {
+	result := make(map[string][]byte)
+
+	treeURL := fmt.Sprintf("%s/repos/%s/%s/git/trees/%s?recursive=1", p.app.base(), owner, repoName, sha)
+	var tree struct {
+		Tree []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+		} `json:"tree"`
+	}
+	if err := p.app.apiGet(ctx, token, treeURL, &tree); err != nil {
+		slog.Warn("firstrun: fetch source tree", "repo", owner+"/"+repoName, "error", err)
+		return result
+	}
+
+	sourceExts := map[string]bool{".go": true, ".py": true, ".js": true, ".ts": true}
+	const maxFiles = 60
+	fetched := 0
+
+	for _, entry := range tree.Tree {
+		if entry.Type != "blob" || fetched >= maxFiles {
+			continue
+		}
+		if !sourceExts[filepath.Ext(entry.Path)] {
+			continue
+		}
+		content, err := p.app.FetchFileContent(ctx, token, owner, repoName, entry.Path, sha)
+		if err != nil || content == nil {
+			continue
+		}
+		result[entry.Path] = content
+		fetched++
+	}
+
+	slog.Info("firstrun: collected source files", "repo", owner+"/"+repoName, "count", fetched)
 	return result
 }
 

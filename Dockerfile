@@ -18,7 +18,12 @@ RUN go mod download
 
 # Copy source and build.
 COPY . .
-RUN go build -trimpath -ldflags="-s -w" -o /bin/tass ./cmd/tass
+ARG VERSION=docker
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+RUN go build -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
+    -o /bin/tass ./cmd/tass
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -35,10 +40,12 @@ COPY --from=builder /bin/tass /usr/local/bin/tass
 
 # Tree-sitter rule files (data, not code).
 COPY --from=builder /app/rules /app/rules
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 
 USER tass
 WORKDIR /app
 
 EXPOSE 8080
 
-CMD ["tass", "serve", "--addr", ":8080", "--db", "/data/tass.db"]
+CMD ["/bin/sh", "/app/docker-entrypoint.sh"]

@@ -1,0 +1,162 @@
+package templates
+
+import (
+	"fmt"
+	"time"
+	"github.com/tass-security/tass/internal/storage"
+)
+
+// AuditPageData bundles everything needed for the audit trail page.
+type AuditPageData struct {
+	Login    string
+	Avatar   string
+	RepoID   int64
+	RepoName string
+	From     string // RFC3339 or "" for all time
+	To       string // RFC3339 or "" for all time
+	Entries  []storage.AuditEntry
+}
+
+// Audit renders the /audit/{repo_id} timeline page.
+templ Audit(d AuditPageData) {
+	@Page(d.RepoName+" — Audit", d.Login, d.Avatar) {
+		<div class="page-header">
+			<h2>Audit Trail</h2>
+			<p>
+				<a href="/dashboard">← Dashboard</a>
+				· { d.RepoName }
+			</p>
+		</div>
+
+		<div style="display:flex;align-items:flex-end;gap:16px;margin-bottom:24px;flex-wrap:wrap">
+			<form
+				hx-get={ fmt.Sprintf("/audit/%d", d.RepoID) }
+				hx-target="#audit-section"
+				hx-swap="outerHTML"
+				hx-push-url="true"
+				style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap"
+			>
+				<div>
+					<label style="display:block;font-size:12px;color:var(--fg2);margin-bottom:4px;font-weight:500">From</label>
+					<input
+						type="date"
+						name="from"
+						value={ dateOnly(d.From) }
+						style="padding:6px 10px;border:0.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:13px;font-family:var(--sans)"
+					/>
+				</div>
+				<div>
+					<label style="display:block;font-size:12px;color:var(--fg2);margin-bottom:4px;font-weight:500">To</label>
+					<input
+						type="date"
+						name="to"
+						value={ dateOnly(d.To) }
+						style="padding:6px 10px;border:0.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:13px;font-family:var(--sans)"
+					/>
+				</div>
+				<button type="submit" class="btn btn-primary" style="padding:7px 18px">Filter</button>
+			</form>
+			<a
+				href={ templ.SafeURL(fmt.Sprintf("/api/audit/export?repo_id=%d&from=%s&to=%s", d.RepoID, d.From, d.To)) }
+				class="btn"
+				style="padding:7px 16px;margin-left:auto"
+			>Export CSV ↓</a>
+		</div>
+
+		<div id="audit-section">
+			@AuditTable(d)
+		</div>
+	}
+}
+
+// AuditTable is the swappable section returned by HTMX date-filter requests.
+templ AuditTable(d AuditPageData) {
+	if len(d.Entries) == 0 {
+		<p style="color:var(--fg2);padding:24px 0">No audit events found for this date range.</p>
+	} else {
+		<div class="section-title">{ fmt.Sprintf("%d events", len(d.Entries)) }</div>
+		<div class="table-wrap">
+			<table>
+				<thead>
+					<tr>
+						<th>When</th>
+						<th>Type</th>
+						<th>Details</th>
+						<th>Actor</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, e := range d.Entries {
+						<tr>
+							<td style="white-space:nowrap;color:var(--fg2)">{ e.Timestamp.UTC().Format("Jan 2, 2006 15:04") }</td>
+							<td>@auditKindPill(e.Kind)</td>
+							<td>@auditDetails(e)</td>
+							<td style="font-family:var(--mono);font-size:12px">{ auditActor(e) }</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+templ auditKindPill(kind storage.AuditEventKind) {
+	if kind == storage.AuditKindDecision {
+		<span class="status-pill" style="background:var(--accent-bg);color:var(--accent-fg)">Decision</span>
+	} else {
+		<span class="status-pill" style="background:var(--purple-bg);color:var(--purple-fg)">Manifest</span>
+	}
+}
+
+templ auditDetails(e storage.AuditEntry) {
+	if e.Kind == storage.AuditKindDecision {
+		<span class={ auditDecisionClass(e.Decision) }>{ auditDecisionLabel(e.Decision) }</span>
+		<span style="font-family:var(--mono);font-size:12px;color:var(--fg2);margin-left:6px">{ e.CapabilityID }</span>
+		if e.ScanID != "" {
+			<a href={ templ.SafeURL("/verify/" + e.ScanID) } style="margin-left:8px;font-size:12px">view scan ↗</a>
+		}
+	} else {
+		<span style="font-family:var(--mono);font-size:12px;color:var(--fg2)">commit { shortSHA(e.CommitSHA) }</span>
+	}
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+func auditActor(e storage.AuditEntry) string {
+	if e.Kind == storage.AuditKindDecision {
+		return "@" + e.DecidedBy
+	}
+	return "@" + e.CommittedBy
+}
+
+func auditDecisionClass(decision string) string {
+	if decision == "confirm" {
+		return "status-pill status-verified"
+	}
+	return "status-pill status-pending"
+}
+
+func auditDecisionLabel(decision string) string {
+	if decision == "confirm" {
+		return "Confirmed"
+	}
+	return "Reverted"
+}
+
+func shortSHA(sha string) string {
+	if len(sha) >= 7 {
+		return sha[:7]
+	}
+	return sha
+}
+
+func dateOnly(ts string) string {
+	if ts == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return ts
+	}
+	return t.Format("2006-01-02")
+}

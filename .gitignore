@@ -1,0 +1,18 @@
+# Secrets
+.env.local
+*.pem
+
+# Runtime artifacts
+tass
+tass.db
+*.db
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Editor history
+.history/
+
+# Build output
+dist/

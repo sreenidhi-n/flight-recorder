@@ -5,7 +5,12 @@ import (
 	"os"
 )
 
-const version = "v3.0.0-dev"
+// Populated at build time via -ldflags.
+var (
+	version   = "dev"
+	commit    = "none"
+	buildDate = "unknown"
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -15,7 +20,7 @@ func main() {
 
 	switch os.Args[1] {
 	case "--version", "-v", "version":
-		fmt.Printf("tass %s\n", version)
+		fmt.Printf("tass %s (commit %s, built %s)\n", version, commit, buildDate)
 	case "init":
 		if err := runInit(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)

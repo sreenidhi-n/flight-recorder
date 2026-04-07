@@ -48,6 +48,11 @@ type Store interface {
 	GetStatsByInstallation(ctx context.Context, installationID int64) (*InstallationStats, error)
 	GetRecentScans(ctx context.Context, installationID int64, limit int) ([]RecentScan, error)
 
+	// Audit trail
+	SaveManifestSnapshot(ctx context.Context, s ManifestSnapshot) error
+	GetAuditTrail(ctx context.Context, repoID int64, from, to time.Time) ([]AuditEntry, error)
+	GetManifestHistory(ctx context.Context, repoID int64, limit int) ([]ManifestSnapshot, error)
+
 	Close() error
 }
 
@@ -143,6 +148,39 @@ type RecentScan struct {
 	NovelCount int
 	Status     ScanStatus
 	ScannedAt  time.Time
+}
+
+// ManifestSnapshot records one manifest commit for the audit trail.
+type ManifestSnapshot struct {
+	ID          string
+	RepoID      int64
+	CommitSHA   string // PR head SHA at commit time
+	ContentYAML string // full tass.manifest.yaml text
+	CommittedBy string // GitHub login
+	CommittedAt time.Time
+}
+
+// AuditEventKind distinguishes the two types of events in the audit trail.
+type AuditEventKind string
+
+const (
+	AuditKindDecision AuditEventKind = "decision"
+	AuditKindManifest AuditEventKind = "manifest"
+)
+
+// AuditEntry is one row in the merged audit timeline.
+// Only the fields relevant to the Kind are populated.
+type AuditEntry struct {
+	Kind      AuditEventKind
+	Timestamp time.Time
+	// decision fields
+	ScanID       string
+	CapabilityID string
+	Decision     string // "confirm" or "revert"
+	DecidedBy    string
+	// manifest fields
+	CommitSHA   string
+	CommittedBy string
 }
 
 // InstallationStats aggregates analytics across all repos under one GitHub App installation.
@@ -416,7 +454,7 @@ func scanScanResult(row scanner) (*ScanResult, error) {
 
 func (s *SQLiteStore) SaveDecision(ctx context.Context, d VerificationDecision) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO verification_decisions
+		INSERT OR REPLACE INTO verification_decisions
 			(id, scan_id, capability_id, decision, justification, decided_by, decided_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, d.ID, d.ScanID, d.CapabilityID, string(d.Decision),
@@ -597,6 +635,88 @@ func (s *SQLiteStore) GetRecentScans(ctx context.Context, installationID int64, 
 		scans = append(scans, rs)
 	}
 	return scans, rows.Err()
+}
+
+func (s *SQLiteStore) SaveManifestSnapshot(ctx context.Context, snap ManifestSnapshot) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT OR REPLACE INTO manifest_history
+			(id, repo_id, commit_sha, content_yaml, committed_by, committed_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, snap.ID, snap.RepoID, snap.CommitSHA, snap.ContentYAML,
+		snap.CommittedBy, snap.CommittedAt.UTC().Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("storage: save manifest snapshot %s: %w", snap.ID, err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) GetManifestHistory(ctx context.Context, repoID int64, limit int) ([]ManifestSnapshot, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, repo_id, commit_sha, content_yaml, committed_by, committed_at
+		FROM manifest_history WHERE repo_id = ?
+		ORDER BY committed_at DESC LIMIT ?
+	`, repoID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("storage: get manifest history repo %d: %w", repoID, err)
+	}
+	defer rows.Close()
+	var snaps []ManifestSnapshot
+	for rows.Next() {
+		var s ManifestSnapshot
+		var at string
+		if err := rows.Scan(&s.ID, &s.RepoID, &s.CommitSHA, &s.ContentYAML, &s.CommittedBy, &at); err != nil {
+			return nil, fmt.Errorf("storage: scan manifest history row: %w", err)
+		}
+		s.CommittedAt, _ = time.Parse(time.RFC3339, at)
+		snaps = append(snaps, s)
+	}
+	return snaps, rows.Err()
+}
+
+// GetAuditTrail returns a merged, time-ordered list of verification decisions and
+// manifest commits for a repository. Zero-value from/to means "no bound".
+func (s *SQLiteStore) GetAuditTrail(ctx context.Context, repoID int64, from, to time.Time) ([]AuditEntry, error) {
+	if from.IsZero() {
+		from = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	if to.IsZero() {
+		to = time.Now().UTC().Add(48 * time.Hour)
+	}
+	fromStr := from.UTC().Format(time.RFC3339)
+	toStr := to.UTC().Format(time.RFC3339)
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT 'decision', vd.decided_at, vd.scan_id, vd.capability_id, vd.decision, vd.decided_by, '', ''
+		FROM verification_decisions vd
+		JOIN scan_results sr ON sr.id = vd.scan_id
+		WHERE sr.repo_id = ? AND vd.decided_at >= ? AND vd.decided_at <= ?
+
+		UNION ALL
+
+		SELECT 'manifest', mh.committed_at, '', '', '', '', mh.commit_sha, mh.committed_by
+		FROM manifest_history mh
+		WHERE mh.repo_id = ? AND mh.committed_at >= ? AND mh.committed_at <= ?
+
+		ORDER BY 2 DESC
+	`, repoID, fromStr, toStr, repoID, fromStr, toStr)
+	if err != nil {
+		return nil, fmt.Errorf("storage: get audit trail repo %d: %w", repoID, err)
+	}
+	defer rows.Close()
+
+	var entries []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		var kind, ts string
+		if err := rows.Scan(&kind, &ts, &e.ScanID, &e.CapabilityID,
+			&e.Decision, &e.DecidedBy, &e.CommitSHA, &e.CommittedBy); err != nil {
+			return nil, fmt.Errorf("storage: scan audit row: %w", err)
+		}
+		e.Kind = AuditEventKind(kind)
+		e.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
 }
 
 func (s *SQLiteStore) GetStatsByInstallation(ctx context.Context, installationID int64) (*InstallationStats, error) {

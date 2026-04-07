@@ -1,141 +1,126 @@
 # TASS — Trusted AI Security Scanner
 
-> **Automatic capability detection for AI-generated code. Zero install. GitHub App is the product.**
+> *Machines state facts. Humans state intent.*
 
-TASS scans every pull request for newly introduced capabilities — new dependencies, HTTP calls, database writes, filesystem operations — and surfaces them for developer review before merge.
+TASS is a GitHub App that automatically scans every pull request for newly introduced capabilities in AI-generated code — new dependencies, HTTP calls, database writes, filesystem access — and surfaces them for explicit human review before merge.
 
-```
-Developer opens PR → TASS scans → posts PR comment → dev clicks link →
-reviews capabilities in browser → clicks Confirm/Revert →
-TASS commits updated manifest → check goes green
-```
-
-Nobody installs a binary. Nobody opens a terminal. **The GitHub App is the product.**
+**Nobody installs a binary. Nobody opens a terminal. The GitHub App IS the product.**
 
 ---
 
-## What TASS Detects
-
-| Category | Examples |
-|----------|---------|
-| 📦 New Dependency | `requests==2.31.0` in requirements.txt, `stripe-go v76` in go.mod |
-| 🌐 External API / Network | `http.Get(...)`, `fetch(...)`, `requests.post(...)` |
-| 🗄️ Database Operation | `sql.Open(...)`, `sqlite3.connect(...)` |
-| 📁 Filesystem Access | `os.WriteFile(...)`, `open("w")`, `fs.writeFile(...)` |
-| 🔐 Privilege Pattern | sudo calls, capability escalation patterns |
-
-Detection runs on **two layers**:
-- **Layer 0 — Dependency diff:** Compares `go.mod`, `requirements.txt`, `package.json` between base and head branches.
-- **Layer 1 — AST queries:** Tree-sitter queries on Go, Python, JavaScript source files.
-
----
-
-## Architecture
-
-Single Go binary deployed on [Fly.io](https://fly.io). No microservices. No Kubernetes.
+## How it works
 
 ```
-GitHub Webhooks → Webhook Handler → Scanner Engine → SQLite Store
-                                                  ↓
-                  PR Comment ← Checks API ← Verification Decision Engine
-                                                  ↓
-                  Developer Browser → Templ+HTMX Verification UI
+Developer opens PR
+  → TASS scans changed files (Layer 0: deps + Layer 1: AST)
+  → Diffs against tass.manifest.yaml
+  → Posts PR comment listing novel capabilities
+  → Creates GitHub Check (status: action_required)
+
+Developer clicks the link in the comment
+  → Lands on TASS verification UI
+  → Clicks Confirm or Revert for each capability
+  → TASS commits updated manifest to PR branch
+  → GitHub Check goes green ✓
 ```
 
-**Stack:** Go · Templ + HTMX · Pico CSS · SQLite · Tree-sitter · GitHub App
+---
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Language | Go (single binary) |
+| UI | Templ + HTMX, zero JS framework |
+| CSS | Custom design system, dark mode via `prefers-color-scheme` |
+| Database | SQLite via `modernc.org/sqlite` (pure Go, CGO-free) |
+| AST scanning | Tree-sitter via `smacker/go-tree-sitter` (CGO) |
+| GitHub | GitHub App: JWT auth, webhooks, Checks API, Contents API |
+| Deploy | Fly.io (single binary, persistent volume for SQLite) |
 
 ---
 
-## Quick Start (Install the GitHub App)
-
-1. Go to `https://github.com/apps/tass-security` (or your self-hosted URL)
-2. Click **Install** → select repositories → authorize
-3. TASS opens a setup PR on each repo with the initial `tass.manifest.yaml`
-4. Merge the setup PR to activate scanning
-
-That's it. Every future PR is scanned automatically.
-
----
-
-## Self-Hosting
-
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full Fly.io deployment guide.
+## CLI
 
 ```bash
-# Quick deploy
-fly launch --copy-config
-fly secrets set TASS_GITHUB_APP_ID=... TASS_GITHUB_WEBHOOK_SECRET=... # etc
+tass init                    # Scan repo, generate tass.manifest.yaml baseline
+tass scan [--base main]      # Diff HEAD against base branch, report novel caps
+tass serve                   # Start the web server (see env vars below)
+tass seed [--db tass.db]     # Insert demo data for dashboard preview
+tass version                 # Print version, commit SHA, build date
+```
+
+### Environment variables (server)
+
+| Variable | Required | Description |
+|---|---|---|
+| `TASS_GITHUB_APP_ID` | ✓ | GitHub App numeric ID |
+| `TASS_GITHUB_CLIENT_ID` | ✓ | OAuth client ID |
+| `TASS_GITHUB_CLIENT_SECRET` | ✓ | OAuth client secret |
+| `TASS_GITHUB_WEBHOOK_SECRET` | ✓ | Webhook HMAC secret |
+| `TASS_GITHUB_PRIVATE_KEY_PATH` | ✓ | Path to RSA private key `.pem` |
+| `TASS_SESSION_SECRET` | ✓ | 32+ byte random string for cookie signing |
+| `TASS_BASE_URL` | ✓ | Public URL, e.g. `https://tass.example.com` |
+
+---
+
+## Local development
+
+```bash
+# Prerequisites: Go 1.22+, CGO_ENABLED=1, Xcode CLT (macOS)
+
+git clone https://github.com/tass-security/tass
+cd tass
+
+# Build
+make build          # → ./tass
+
+# Run tests
+make test
+
+# Regenerate templates after editing .templ files
+make generate
+
+# Demo: seed a local DB and start the server
+./tass seed --db demo.db
+source .env.local   # set env vars (see above)
+./tass serve --db demo.db
+# → http://localhost:8080/dashboard?installation_id=12345
+```
+
+---
+
+## Detection layers
+
+**Layer 0 — Dependency file diffing**
+Compares `go.mod`, `requirements.txt`, `package.json`, etc. between the PR head and base. Every newly added package is a detected capability.
+
+**Layer 1 — AST scanning (Tree-sitter)**
+Structural queries (`.scm` files in `rules/`) detect API calls, database operations, filesystem access, and privilege patterns directly in source code. Supports Go, Python, JavaScript.
+
+Current rules cover: `net/http`, `database/sql`, `os` (filesystem), `exec.Command`, `boto3`, `strands.Agent`, `FastMCP`, OpenTelemetry, and more.
+
+---
+
+## Deployment (Fly.io)
+
+```bash
+fly launch --name tass-yourname --region iad
+fly volumes create tass_data --region iad --size 1
+fly secrets set \
+  TASS_GITHUB_APP_ID="..." \
+  TASS_GITHUB_CLIENT_ID="..." \
+  TASS_GITHUB_CLIENT_SECRET="..." \
+  TASS_GITHUB_WEBHOOK_SECRET="..." \
+  TASS_SESSION_SECRET="$(openssl rand -hex 32)"
+fly secrets set TASS_GITHUB_PRIVATE_KEY="$(cat your-app.pem)"
 fly deploy
 ```
 
----
-
-## The Manifest
-
-`tass.manifest.yaml` is committed to your repository. It's a behavioral SBOM — a declarative record of what your code can do. TASS reads it to know what's already approved; any new capability not in the manifest triggers a verification request.
-
-```yaml
-# tass.manifest.yaml — auto-generated and maintained by TASS
-schema_version: "1"
-generated_at: "2026-03-22T10:00:00Z"
-repo: acme-corp/payments-service
-
-capabilities:
-  - id: "dep:python:requests"
-    name: "requests"
-    category: external_dependency
-    confirmed: true
-    confirmed_by: "alice@acme.com"
-    confirmed_at: "2026-03-22T10:05:00Z"
-    justification: "HTTP client for payment gateway integration"
-```
-
----
-
-## Development
-
-```bash
-go build ./cmd/tass           # Build binary
-go test ./...                 # Run all tests
-templ generate                # Regenerate UI templates
-tass serve --addr :8080       # Start server (requires env vars)
-```
-
-**Required env vars for `tass serve`:**
-
-| Variable | Description |
-|----------|-------------|
-| `TASS_GITHUB_APP_ID` | GitHub App ID |
-| `TASS_GITHUB_CLIENT_ID` | OAuth App Client ID |
-| `TASS_GITHUB_CLIENT_SECRET` | OAuth App Client Secret |
-| `TASS_GITHUB_WEBHOOK_SECRET` | Webhook HMAC secret |
-| `TASS_GITHUB_PRIVATE_KEY_PATH` | Path to `.pem` private key |
-| `TASS_SESSION_SECRET` | 32+ random bytes for cookie signing |
-| `TASS_BASE_URL` | Public URL (e.g. `https://app.tass.dev`) |
-
----
-
-## Project Structure
-
-```
-cmd/tass/           CLI entrypoint (serve, init, scan, version)
-internal/auth/      GitHub OAuth + signed cookie sessions
-internal/github/    GitHub App: JWT, webhooks, Checks API, comments, file fetch
-internal/scanner/   Detection engine (Layer 0 dep diff + Layer 1 AST)
-internal/server/    HTTP server, routing, rate limiting, logging
-internal/storage/   SQLite multi-tenant storage
-internal/ui/        Templ+HTMX web UI handlers and templates
-pkg/contracts/      Shared types (Capability, CapabilitySet, decisions)
-pkg/manifest/       Manifest YAML read/write/diff
-rules/              Tree-sitter .scm query files (data, not code)
-```
+See [CLAUDE.md](CLAUDE.md) for the full implementation roadmap.
 
 ---
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
-
----
-
-*TASS v3.0 — "The Disagreement Engine"*
+MIT

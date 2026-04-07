@@ -76,6 +76,15 @@ func (m *serverMemStore) GetStatsByInstallation(_ context.Context, _ int64) (*st
 func (m *serverMemStore) GetRecentScans(_ context.Context, _ int64, _ int) ([]storage.RecentScan, error) {
 	return nil, nil
 }
+func (m *serverMemStore) SaveManifestSnapshot(_ context.Context, _ storage.ManifestSnapshot) error {
+	return nil
+}
+func (m *serverMemStore) GetAuditTrail(_ context.Context, _ int64, _, _ time.Time) ([]storage.AuditEntry, error) {
+	return nil, nil
+}
+func (m *serverMemStore) GetManifestHistory(_ context.Context, _ int64, _ int) ([]storage.ManifestSnapshot, error) {
+	return nil, nil
+}
 func (m *serverMemStore) Close() error { return nil }
 
 // --- helpers ---

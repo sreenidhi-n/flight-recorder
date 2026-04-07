@@ -3,10 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 
+	"github.com/fatih/color"
 	"github.com/tass-security/tass/internal/scanner"
 	"github.com/tass-security/tass/pkg/manifest"
 )
@@ -28,17 +28,16 @@ func runInit(args []string) error {
 
 	manifestPath := filepath.Join(repoRoot, manifestFilename)
 	if _, err := os.Stat(manifestPath); err == nil {
-		slog.Warn("tass.manifest.yaml already exists — overwriting", "path", manifestPath)
+		color.Yellow("⚠  tass.manifest.yaml already exists — overwriting")
 	}
 
-	slog.Info("scanning repository for capabilities", "root", repoRoot)
+	fmt.Printf("Scanning %s for capabilities…\n", repoRoot)
 
-	// Build the AST scanner from the rules directory (optional — init works without it).
+	// Build the AST scanner from the rules directory (optional).
 	absRulesDir, _ := filepath.Abs(*rulesDir)
 	astScanner, err := scanner.NewASTScannerFromDir(absRulesDir)
 	if err != nil {
-		slog.Warn("tass init: could not load AST rules, running Layer 0 only",
-			"rules-dir", absRulesDir, "err", err)
+		color.Yellow("  warning: could not load AST rules (%v) — running Layer 0 only", err)
 		astScanner = nil
 	}
 
@@ -48,10 +47,7 @@ func runInit(args []string) error {
 		return fmt.Errorf("tass init: scan: %w", err)
 	}
 
-	// Derive a repo identifier from the directory name.
-	// In Phase 3 this comes from the GitHub API; for now, use the folder name.
 	repoName := filepath.Base(repoRoot)
-
 	m := manifest.FromCapabilitySet(*cs, repoName)
 
 	if err := manifest.Save(m, manifestPath); err != nil {
@@ -67,14 +63,29 @@ func runInit(args []string) error {
 		}
 	}
 
-	fmt.Printf("\nFound %d capabilities (%d dependencies, %d AST detections).\n",
-		len(cs.Capabilities), l0count, l1count)
-	fmt.Printf("Manifest written to: %s\n\n", manifestPath)
-	fmt.Println("Next steps:")
-	fmt.Println("  1. Review tass.manifest.yaml — add notes for any entries that need context.")
+	green := color.New(color.FgGreen, color.Bold).SprintfFunc()
+	dim := color.New(color.Faint).SprintfFunc()
+
+	fmt.Printf("\n%s  Found %d %s  %s\n",
+		green("✓"),
+		len(cs.Capabilities),
+		plural(len(cs.Capabilities), "capability", "capabilities"),
+		dim("(%d deps, %d AST detections)", l0count, l1count),
+	)
+	fmt.Printf("  Manifest written to: %s\n\n", color.CyanString(manifestPath))
+
+	fmt.Println(color.New(color.Bold).Sprint("Next steps:"))
+	fmt.Println("  1. Review tass.manifest.yaml — add notes for entries that need context.")
 	fmt.Println("  2. Commit the manifest alongside your source code.")
 	fmt.Println("  3. Install the TASS GitHub App to start scanning PRs automatically.")
+	fmt.Println()
 
 	return nil
 }
 
+func plural(n int, singular, pluralForm string) string {
+	if n == 1 {
+		return singular
+	}
+	return pluralForm
+}

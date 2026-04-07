@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -78,7 +79,7 @@ func runServe(args []string) error {
 	sc := scanner.New(scanner.DefaultRegistry, astScanner)
 
 	// --- Base URL & session secret ---
-	baseURL := os.Getenv("TASS_BASE_URL")
+	baseURL := strings.TrimRight(os.Getenv("TASS_BASE_URL"), "/")
 	if baseURL == "" {
 		baseURL = "http://localhost" + addr
 	}
@@ -105,25 +106,31 @@ func runServe(args []string) error {
 	verifier := gh.NewVerifier(app, store, baseURL)
 	verifyHandler := server.NewVerifyHandler(verifier)
 
-	// --- Stats handler ---
+	// --- Stats + Audit handlers ---
 	statsHandler := server.NewStatsHandler(store)
+	auditAPIHandler := server.NewAuditHandler(store)
 
 	// --- UI handlers ---
 	indexHandler := ui.NewIndexHandler(sessions)
 	verifyPageHandler := ui.NewVerifyPageHandler(store, sessions, baseURL)
+	uiVerifyHandler := ui.NewUIVerifyHandler(verifier, store, sessions, baseURL)
 	dashboardHandler := ui.NewDashboardHandler(store, sessions, app)
 	repoDashboardHandler := ui.NewRepoDashboardHandler(store, sessions)
+	auditPageHandler := ui.NewAuditPageHandler(store, sessions)
 	setupHandler := ui.NewSetupHandler(store, sessions)
 
 	// --- HTTP server ---
 	rawMux := server.BuildMux(server.Handlers{
 		Webhook:       webhookHandler,
 		APIVerify:     verifyHandler,
+		UIVerify:      uiVerifyHandler,
 		APIStats:      statsHandler,
+		APIAudit:      auditAPIHandler,
 		Index:         indexHandler,
 		VerifyPage:    verifyPageHandler,
 		Dashboard:     server.RequireAuthMiddleware(sessions, dashboardHandler),
 		RepoDashboard: server.RequireAuthMiddleware(sessions, repoDashboardHandler),
+		Audit:         server.RequireAuthMiddleware(sessions, auditPageHandler),
 		Setup:         setupHandler,
 		Static:        ui.StaticHandler(),
 		OAuthStart:    http.HandlerFunc(oauthHandler.HandleStart),

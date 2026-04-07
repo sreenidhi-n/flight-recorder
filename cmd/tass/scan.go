@@ -7,15 +7,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/fatih/color"
 	"github.com/tass-security/tass/internal/scanner"
 	"github.com/tass-security/tass/pkg/manifest"
 )
 
-// runScan implements `tass scan`. It returns (exitCode, error):
+// runScan implements `tass scan`. Returns (exitCode, error):
 //   - (0, nil)  → no novel capabilities detected
-//   - (1, nil)  → novel capabilities found (not an error — it's a status)
-//   - (1, err)  → operational failure (bad flags, missing manifest, etc.)
+//   - (1, nil)  → novel capabilities found (expected — this is the signal)
+//   - (1, err)  → operational failure
 func runScan(args []string) (int, error) {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	base := fs.String("base", "main", "base branch to diff against")
@@ -35,12 +37,21 @@ func runScan(args []string) (int, error) {
 		return 1, fmt.Errorf("tass scan: resolve path: %w", err)
 	}
 
-	// Load existing manifest — must exist (run `tass init` first).
+	// Load existing manifest — must exist. Surface a clear action if missing.
 	manifestPath := filepath.Join(repoRoot, manifestFilename)
 	existing, err := manifest.Load(manifestPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return 1, fmt.Errorf("tass.manifest.yaml not found in %s — run 'tass init' first", repoRoot)
+			color.Red("✗  tass.manifest.yaml not found in %s", repoRoot)
+			fmt.Fprintln(os.Stderr, "   Run 'tass init' first to generate the baseline manifest.")
+			return 1, nil // user error, not a Go error
+		}
+		// YAML parse error — yaml.v3 includes line:col in the message.
+		if isYAMLError(err) {
+			color.Red("✗  tass.manifest.yaml is invalid:")
+			fmt.Fprintf(os.Stderr, "   %v\n", err)
+			fmt.Fprintln(os.Stderr, "   Fix the YAML or run 'tass init' to regenerate the manifest.")
+			return 1, nil
 		}
 		return 1, fmt.Errorf("tass scan: load manifest: %w", err)
 	}
@@ -49,23 +60,26 @@ func runScan(args []string) (int, error) {
 	absRulesDir, _ := filepath.Abs(*rulesDir)
 	astScanner, err := scanner.NewASTScannerFromDir(absRulesDir)
 	if err != nil {
-		// Non-fatal: fall back to Layer 0 only and warn.
-		fmt.Fprintf(os.Stderr, "warning: could not load AST rules (%v) — running Layer 0 only\n", err)
+		color.Yellow("  warning: could not load AST rules (%v) — running Layer 0 only", err)
 		astScanner = nil
 	}
 
 	s := scanner.New(scanner.DefaultRegistry, astScanner)
 	cs, err := s.ScanDiff(repoRoot, *base)
 	if err != nil {
+		if isNoGitError(err) {
+			color.Red("✗  Not a git repository (or git is not installed).")
+			fmt.Fprintf(os.Stderr, "   tass scan requires git. Ensure %s is inside a git repo.\n", repoRoot)
+			return 1, nil
+		}
 		return 1, fmt.Errorf("tass scan: diff scan: %w", err)
 	}
 
-	// Diff detected capabilities against the manifest to find novel ones.
 	novel := manifest.Diff(*cs, existing)
 
 	if len(novel) == 0 {
 		if *format == "text" {
-			fmt.Println("No novel capabilities detected.")
+			color.Green("✓  No novel capabilities detected.")
 		} else {
 			fmt.Println("[]")
 		}
@@ -80,22 +94,53 @@ func runScan(args []string) (int, error) {
 		if err := enc.Encode(novel); err != nil {
 			return 1, fmt.Errorf("tass scan: encode json: %w", err)
 		}
+
 	default: // "text"
-		fmt.Fprintf(os.Stdout, "TASS scan — %d novel capability(s) detected\n\n", len(novel))
+		header := color.New(color.FgYellow, color.Bold).SprintfFunc()
+		capID := color.New(color.FgCyan).SprintfFunc()
+		loc := color.New(color.Faint).SprintfFunc()
+
+		fmt.Printf("\n%s\n\n", header("TASS scan — %d novel %s detected",
+			len(novel), plural(len(novel), "capability", "capabilities")))
+
 		for _, c := range novel {
-			fmt.Fprintf(os.Stdout, "  + %-50s [%s]\n", c.ID, c.Category)
-			fmt.Fprintf(os.Stdout, "    Name:       %s\n", c.Name)
-			fmt.Fprintf(os.Stdout, "    File:       %s", c.Location.File)
+			fmt.Printf("  + %s  [%s]\n", capID("%-50s", c.ID), c.Category)
+			fmt.Printf("    Name:       %s\n", c.Name)
+			file := c.Location.File
 			if c.Location.Line > 0 {
-				fmt.Fprintf(os.Stdout, ":%d", c.Location.Line)
+				file = fmt.Sprintf("%s:%d", file, c.Location.Line)
 			}
-			fmt.Fprintln(os.Stdout)
-			fmt.Fprintf(os.Stdout, "    Confidence: %.0f%%\n", c.Confidence*100)
-			fmt.Fprintln(os.Stdout)
+			fmt.Printf("    File:       %s\n", loc(file))
+			fmt.Printf("    Confidence: %.0f%%\n", c.Confidence*100)
+			fmt.Println()
 		}
-		fmt.Println("Run 'tass init' to accept these as baseline, or open a PR and let the")
-		fmt.Println("TASS GitHub App handle verification.")
+
+		fmt.Println("Open a PR and let the TASS GitHub App handle verification,")
+		fmt.Println("or run 'tass init' to accept these as the new baseline.")
+		fmt.Println()
 	}
 
 	return 1, nil
+}
+
+// isNoGitError heuristically detects "not a git repo" errors.
+func isNoGitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "not a git repository") ||
+		strings.Contains(msg, "executable file not found") ||
+		strings.Contains(msg, "git: command not found")
+}
+
+// isYAMLError heuristically detects YAML parse errors from gopkg.in/yaml.v3.
+func isYAMLError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "yaml:") ||
+		strings.Contains(msg, "YAML") ||
+		strings.Contains(msg, "unmarshal")
 }

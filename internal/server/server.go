@@ -55,12 +55,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // Handlers groups all HTTP handler dependencies for BuildMux.
 type Handlers struct {
 	Webhook       http.Handler // POST /webhooks/github
-	APIVerify     http.Handler // POST /api/verify
+	APIVerify     http.Handler // POST /api/verify  (JSON — programmatic)
+	UIVerify      http.Handler // POST /ui/verify   (form + HTML — HTMX)
 	APIStats      http.Handler // GET  /api/stats
+	APIAudit      http.Handler // GET  /api/audit + /api/audit/export
 	Index         http.Handler // GET  /
 	VerifyPage    http.Handler // GET  /verify/
 	Dashboard     http.Handler // GET  /dashboard
 	RepoDashboard http.Handler // GET  /dashboard/repo
+	Audit         http.Handler // GET  /audit/
 	Setup         http.Handler // GET  /setup
 	Static        http.Handler // GET  /static/
 	OAuthStart    http.Handler // GET  /auth/github
@@ -109,14 +112,18 @@ func BuildMux(h Handlers) *http.ServeMux {
 	// Webhook receiver (no user auth — uses HMAC signature verification)
 	mux.Handle("/webhooks/github", h.Webhook)
 
-	// API endpoints — rate-limited to 60 verify calls per minute per IP
-	mux.Handle("/api/verify", RateLimitMiddleware(60, time.Minute, h.APIVerify))
+	// API endpoints
+	mux.Handle("/api/verify", RateLimitMiddleware(60, time.Minute, h.APIVerify)) // JSON API
+	mux.Handle("/ui/verify", RateLimitMiddleware(60, time.Minute, h.UIVerify))   // HTMX form+HTML
 	mux.Handle("/api/stats", h.APIStats)
+	mux.Handle("/api/audit/export", h.APIAudit)
+	mux.Handle("/api/audit", h.APIAudit)
 
 	// Web UI pages (authenticated)
 	mux.Handle("/verify/", h.VerifyPage)
 	mux.Handle("/dashboard/repo", h.RepoDashboard)
 	mux.Handle("/dashboard", h.Dashboard)
+	mux.Handle("/audit/", h.Audit)
 	mux.Handle("/setup", h.Setup)
 	mux.Handle("/", h.Index)
 

@@ -139,13 +139,24 @@ func (v *Verifier) Decide(
 
 	// --- 7. Commit updated manifest (confirmed caps only) ---
 	if tokenErr == nil {
-	if err := v.commitManifest(ctx, token, owner, repoName, scan, confirmedCaps); err != nil {
-		log.Error("verifier: commit manifest", "error", err)
-		// Non-fatal — still update check
-	} else {
-		result.ManifestCommitted = true
-		log.Info("verifier: manifest committed")
-	}
+		manifestContent, commitErr := v.commitManifest(ctx, token, owner, repoName, scan, confirmedCaps)
+		if commitErr != nil {
+			log.Error("verifier: commit manifest", "error", commitErr)
+		} else {
+			result.ManifestCommitted = true
+			log.Info("verifier: manifest committed")
+			snap := storage.ManifestSnapshot{
+				ID:          fmt.Sprintf("mh-%d-%d", scan.RepoID, time.Now().UnixMilli()),
+				RepoID:      scan.RepoID,
+				CommitSHA:   scan.CommitSHA,
+				ContentYAML: string(manifestContent),
+				CommittedBy: decidedBy,
+				CommittedAt: time.Now().UTC(),
+			}
+			if snapErr := v.store.SaveManifestSnapshot(ctx, snap); snapErr != nil {
+				log.Error("verifier: save manifest snapshot", "error", snapErr)
+			}
+		}
 	}
 
 	// --- 8. Update Check Run ---
@@ -198,17 +209,17 @@ func (v *Verifier) Decide(
 }
 
 // commitManifest fetches the existing manifest at the PR branch (for its SHA),
-// merges confirmed capabilities, and commits.
+// merges confirmed capabilities, commits, and returns the committed YAML content.
 func (v *Verifier) commitManifest(
 	ctx context.Context,
 	token, owner, repo string,
 	scan *storage.ScanResult,
 	confirmedCaps []contracts.Capability,
-) error {
+) ([]byte, error) {
 	// Fetch current manifest at PR branch to get blob SHA (required for update)
 	existing, err := v.app.FetchFile(ctx, token, owner, repo, manifestPath, scan.HeadBranch)
 	if err != nil {
-		return fmt.Errorf("fetch manifest at %s: %w", scan.HeadBranch, err)
+		return nil, fmt.Errorf("fetch manifest at %s: %w", scan.HeadBranch, err)
 	}
 
 	var m *manifest.Manifest
@@ -246,11 +257,14 @@ func (v *Verifier) commitManifest(
 
 	content, err := manifest.Marshal(m)
 	if err != nil {
-		return fmt.Errorf("marshal manifest: %w", err)
+		return nil, fmt.Errorf("marshal manifest: %w", err)
 	}
 
-	return v.app.CommitManifest(ctx, token, owner, repo,
-		scan.HeadBranch, content, existingSHA, scan.PRNumber)
+	if err := v.app.CommitManifest(ctx, token, owner, repo,
+		scan.HeadBranch, content, existingSHA, scan.PRNumber); err != nil {
+		return nil, err
+	}
+	return content, nil
 }
 
 // renderVerifiedComment builds an updated PR comment summarising the outcome.

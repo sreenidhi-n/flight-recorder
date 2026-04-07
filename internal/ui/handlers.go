@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/a-h/templ"
 	"github.com/tass-security/tass/internal/auth"
@@ -319,6 +320,86 @@ func (h *UIVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render(w, r, http.StatusOK, templates.CapabilityCardFragment(cap, dec, scanID, h.baseURL, result.AllDecided, scan))
+}
+
+// AuditPageHandler serves GET /audit/{repo_id}[?from=...&to=...].
+type AuditPageHandler struct {
+	store    storage.Store
+	sessions *auth.SessionStore
+}
+
+func NewAuditPageHandler(store storage.Store, sessions *auth.SessionStore) *AuditPageHandler {
+	return &AuditPageHandler{store: store, sessions: sessions}
+}
+
+func (h *AuditPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	sess := auth.SessionFrom(r)
+	if sess == nil {
+		http.Redirect(w, r, "/auth/github?return_to="+r.URL.RequestURI(), http.StatusFound)
+		return
+	}
+
+	repoIDStr := strings.TrimPrefix(r.URL.Path, "/audit/")
+	repoID, err := strconv.ParseInt(repoIDStr, 10, 64)
+	if err != nil || repoID == 0 {
+		http.Redirect(w, r, "/dashboard", http.StatusFound)
+		return
+	}
+
+	ctx := r.Context()
+	repo, _ := h.store.GetRepository(ctx, repoID)
+	repoName := fmt.Sprintf("repo #%d", repoID)
+	if repo != nil {
+		repoName = repo.FullName
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+
+	var from, to time.Time
+	if fromStr != "" {
+		from, _ = time.Parse("2006-01-02", fromStr)
+		if from.IsZero() {
+			from, _ = time.Parse(time.RFC3339, fromStr)
+		}
+	}
+	if toStr != "" {
+		to, _ = time.Parse("2006-01-02", toStr)
+		if !to.IsZero() {
+			to = to.Add(24*time.Hour - time.Second) // end of day
+		} else {
+			to, _ = time.Parse(time.RFC3339, toStr)
+		}
+	}
+
+	entries, err := h.store.GetAuditTrail(ctx, repoID, from, to)
+	if err != nil {
+		slog.Error("audit page: get trail", "repo_id", repoID, "error", err)
+	}
+
+	data := templates.AuditPageData{
+		Login:    sess.GitHubLogin,
+		Avatar:   sess.AvatarURL,
+		RepoID:   repoID,
+		RepoName: repoName,
+		From:     fromRFC3339(from),
+		To:       fromRFC3339(to),
+		Entries:  entries,
+	}
+
+	// HTMX partial: return just the swappable section
+	if r.Header.Get("HX-Request") == "true" {
+		render(w, r, http.StatusOK, templates.AuditTable(data))
+		return
+	}
+	render(w, r, http.StatusOK, templates.Audit(data))
+}
+
+func fromRFC3339(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // --- render helper ---
