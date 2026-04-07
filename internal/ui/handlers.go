@@ -132,16 +132,22 @@ func (h *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the installation for this user.
-	// For v3.0 MVP: load stats for the first installation we find.
-	// In v3.1 we'll add org selector support.
 	ctx := r.Context()
 
-	// Try to find an installation ID from the query param or use 0 for "all"
+	// Resolve installation ID: prefer explicit query param, then auto-discover by login.
 	instIDStr := r.URL.Query().Get("installation_id")
 	var instID int64
 	if instIDStr != "" {
 		instID, _ = strconv.ParseInt(instIDStr, 10, 64)
+	}
+	if instID == 0 {
+		inst, err := h.store.GetInstallationByLogin(ctx, sess.GitHubLogin)
+		if err != nil {
+			slog.Warn("dashboard: auto-discover installation failed", "login", sess.GitHubLogin, "error", err)
+		} else if inst != nil {
+			instID = inst.ID
+			slog.Info("dashboard: auto-discovered installation", "login", sess.GitHubLogin, "installation_id", instID)
+		}
 	}
 
 	data := templates.DashboardData{

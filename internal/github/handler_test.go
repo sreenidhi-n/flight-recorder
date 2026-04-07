@@ -44,6 +44,9 @@ func (m *memStore) GetInstallation(_ context.Context, id int64) (*storage.Instal
 	}
 	return nil, nil
 }
+func (m *memStore) GetInstallationByLogin(_ context.Context, _ string) (*storage.Installation, error) {
+	return nil, nil
+}
 func (m *memStore) UpsertRepository(_ context.Context, repo storage.Repository) error {
 	m.repositories[repo.ID] = repo
 	return nil

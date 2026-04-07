@@ -26,6 +26,7 @@ type Store interface {
 	// Installation management
 	UpsertInstallation(ctx context.Context, inst Installation) error
 	GetInstallation(ctx context.Context, id int64) (*Installation, error)
+	GetInstallationByLogin(ctx context.Context, accountLogin string) (*Installation, error)
 
 	// Repository management
 	UpsertRepository(ctx context.Context, repo Repository) error
@@ -286,6 +287,26 @@ func (s *SQLiteStore) GetInstallation(ctx context.Context, id int64) (*Installat
 	}
 	if err != nil {
 		return nil, fmt.Errorf("storage: get installation %d: %w", id, err)
+	}
+	inst.InstalledAt, _ = time.Parse(time.RFC3339, installedAt)
+	inst.TokenExpiresAt, _ = time.Parse(time.RFC3339, tokenExp)
+	return &inst, nil
+}
+
+func (s *SQLiteStore) GetInstallationByLogin(ctx context.Context, accountLogin string) (*Installation, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, account_login, account_type, installed_at, access_token, token_expires_at
+		FROM installations WHERE LOWER(account_login) = LOWER(?) LIMIT 1
+	`, accountLogin)
+	var inst Installation
+	var installedAt, tokenExp string
+	err := row.Scan(&inst.ID, &inst.AccountLogin, &inst.AccountType,
+		&installedAt, &inst.AccessToken, &tokenExp)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("storage: get installation by login %q: %w", accountLogin, err)
 	}
 	inst.InstalledAt, _ = time.Parse(time.RFC3339, installedAt)
 	inst.TokenExpiresAt, _ = time.Parse(time.RFC3339, tokenExp)
