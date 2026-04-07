@@ -109,6 +109,9 @@ func (m *memStore) GetStats(_ context.Context, _ int64) (*storage.RepoStats, err
 func (m *memStore) GetStatsByInstallation(_ context.Context, _ int64) (*storage.InstallationStats, error) {
 	return nil, nil
 }
+func (m *memStore) GetRecentScans(_ context.Context, _ int64, _ int) ([]storage.RecentScan, error) {
+	return nil, nil
+}
 func (m *memStore) Close() error { return nil }
 
 // --- helpers ---

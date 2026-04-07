@@ -156,6 +156,13 @@ func (h *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			data.Stats = stats
 		}
+
+		recentScans, err := h.store.GetRecentScans(ctx, instID, 10)
+		if err != nil {
+			slog.Error("dashboard: get recent scans", "installation_id", instID, "error", err)
+		} else {
+			data.RecentScans = recentScans
+		}
 	}
 
 	render(w, r, http.StatusOK, templates.Dashboard(data))

@@ -32,6 +32,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
+	case "seed":
+		if err := runSeed(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "tass: unknown command %q\n", os.Args[1])
 		printUsage()
@@ -46,6 +51,7 @@ Commands:
   init     Generate tass.manifest.yaml from the current repository
   scan     Scan for new capabilities against a base branch
   serve    Start the TASS web server (production)
+  seed     Insert realistic demo data into the SQLite database
   version  Print version and exit
 
 Run 'tass <command> --help' for more information.

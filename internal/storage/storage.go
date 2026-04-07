@@ -46,6 +46,7 @@ type Store interface {
 	// Analytics
 	GetStats(ctx context.Context, repoID int64) (*RepoStats, error)
 	GetStatsByInstallation(ctx context.Context, installationID int64) (*InstallationStats, error)
+	GetRecentScans(ctx context.Context, installationID int64, limit int) ([]RecentScan, error)
 
 	Close() error
 }
@@ -128,6 +129,20 @@ type RepoStats struct {
 	AvgDurationMS float64
 	ByDeveloper   map[string]DeveloperStats
 	ByCategory    map[string]CategoryStats
+}
+
+// RecentScan is a lightweight scan summary used for the dashboard recent-scans table.
+// It is populated via a JOIN with repositories so callers get the full repo name without
+// a second round-trip.
+type RecentScan struct {
+	ID         string
+	RepoID     int64
+	FullName   string // joined from repositories
+	PRNumber   int
+	HeadBranch string
+	NovelCount int
+	Status     ScanStatus
+	ScannedAt  time.Time
 }
 
 // InstallationStats aggregates analytics across all repos under one GitHub App installation.
@@ -552,6 +567,36 @@ func (s *SQLiteStore) buildCapCategoryMap(ctx context.Context, repoID int64) (ma
 		}
 	}
 	return result, rows.Err()
+}
+
+func (s *SQLiteStore) GetRecentScans(ctx context.Context, installationID int64, limit int) ([]RecentScan, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT sr.id, r.id, r.full_name, sr.pr_number, COALESCE(sr.head_branch,''),
+		       sr.novel_count, sr.status, sr.scanned_at
+		FROM scan_results sr
+		JOIN repositories r ON r.id = sr.repo_id
+		WHERE r.installation_id = ?
+		ORDER BY sr.scanned_at DESC
+		LIMIT ?
+	`, installationID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("storage: get recent scans for installation %d: %w", installationID, err)
+	}
+	defer rows.Close()
+
+	var scans []RecentScan
+	for rows.Next() {
+		var rs RecentScan
+		var scannedAt, status string
+		if err := rows.Scan(&rs.ID, &rs.RepoID, &rs.FullName, &rs.PRNumber, &rs.HeadBranch,
+			&rs.NovelCount, &status, &scannedAt); err != nil {
+			return nil, fmt.Errorf("storage: scan recent scan row: %w", err)
+		}
+		rs.ScannedAt, _ = time.Parse(time.RFC3339, scannedAt)
+		rs.Status = ScanStatus(status)
+		scans = append(scans, rs)
+	}
+	return scans, rows.Err()
 }
 
 func (s *SQLiteStore) GetStatsByInstallation(ctx context.Context, installationID int64) (*InstallationStats, error) {

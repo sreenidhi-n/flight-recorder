@@ -2,16 +2,18 @@ package templates
 
 import (
 	"fmt"
+	"time"
 	"github.com/tass-security/tass/internal/storage"
 )
 
 // DashboardData bundles everything needed for the org-level dashboard.
 type DashboardData struct {
-	Login        string
-	Avatar       string
-	OrgName      string
-	Stats        *storage.InstallationStats
+	Login         string
+	Avatar        string
+	OrgName       string
+	Stats         *storage.InstallationStats
 	RepoStatsList []RepoStatRow
+	RecentScans   []storage.RecentScan
 }
 
 type RepoStatRow struct {
@@ -26,40 +28,85 @@ type RepoStatRow struct {
 // Dashboard renders the org-level analytics page.
 templ Dashboard(d DashboardData) {
 	@Page("Dashboard", d.Login, d.Avatar) {
-		<hgroup>
+		<div class="page-header">
 			<h2>Dashboard</h2>
 			<p>{ d.OrgName } · capability tracking overview</p>
-		</hgroup>
+		</div>
 
 		if d.Stats != nil {
-			<div class="stat-grid">
+			<div class="stats-grid">
 				<div class="stat-card">
-					<div class="stat-value">{ fmt.Sprintf("%d", d.Stats.TotalRepos) }</div>
-					<div class="stat-label">Repos</div>
+					<div class="stat-val">{ fmt.Sprintf("%d", d.Stats.TotalRepos) }</div>
+					<div class="stat-label">Repositories</div>
 				</div>
 				<div class="stat-card">
-					<div class="stat-value">{ fmt.Sprintf("%d", d.Stats.TotalScans) }</div>
-					<div class="stat-label">Total Scans</div>
+					<div class="stat-val">{ fmt.Sprintf("%d", d.Stats.TotalScans) }</div>
+					<div class="stat-label">Total scans</div>
 				</div>
 				<div class="stat-card">
-					<div class="stat-value">{ fmt.Sprintf("%d", d.Stats.TotalCaps) }</div>
-					<div class="stat-label">Capabilities Detected</div>
+					<div class="stat-val">{ fmt.Sprintf("%d", d.Stats.TotalCaps) }</div>
+					<div class="stat-label">Capabilities detected</div>
 				</div>
 				<div class="stat-card">
-					<div class="stat-value">{ confirmRate(d.Stats.ConfirmCount, d.Stats.TotalCaps) }%</div>
-					<div class="stat-label">Confirm Rate</div>
+					<div class="stat-val" style={ confirmRateStyle(d.Stats.ConfirmCount, d.Stats.TotalCaps) }>
+						{ confirmRate(d.Stats.ConfirmCount, d.Stats.TotalCaps) }%
+					</div>
+					<div class="stat-label">Confirm rate</div>
 				</div>
 			</div>
+		} else {
+			<p style="color:var(--fg2);margin-bottom:32px">No scan data yet. Install the GitHub App and open a pull request to get started.</p>
+		}
 
-			if len(d.Stats.ByDeveloper) > 0 {
-				<h3>Developer Override Rates</h3>
+		if len(d.RecentScans) > 0 {
+			<div class="section-title">Recent scans</div>
+			<div class="table-wrap">
+				<table>
+					<thead>
+						<tr>
+							<th>Repository</th>
+							<th>PR</th>
+							<th>Capabilities</th>
+							<th>Status</th>
+							<th>When</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, rs := range d.RecentScans {
+							<tr>
+								<td>
+									<a href={ templ.SafeURL(fmt.Sprintf("/dashboard/repo?repo_id=%d", rs.RepoID)) }>
+										{ rs.FullName }
+									</a>
+								</td>
+								<td>
+									<a href={ templ.SafeURL(fmt.Sprintf("/verify/%s", rs.ID)) }>
+										#{ fmt.Sprintf("%d", rs.PRNumber) }
+										if rs.HeadBranch != "" {
+											{ rs.HeadBranch }
+										}
+									</a>
+								</td>
+								<td>{ fmt.Sprintf("%d new", rs.NovelCount) }</td>
+								<td>@scanStatusPill(rs.Status)</td>
+								<td style="color:var(--fg2)">{ timeAgo(rs.ScannedAt) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		}
+
+		if d.Stats != nil && len(d.Stats.ByDeveloper) > 0 {
+			<div class="section-title">Developer override rates</div>
+			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
 							<th>Developer</th>
 							<th>Confirms</th>
 							<th>Reverts</th>
-							<th>Override Rate</th>
+							<th>Override rate</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -75,123 +122,160 @@ templ Dashboard(d DashboardData) {
 						}
 					</tbody>
 				</table>
-			}
-		} else {
-			<p>No scan data yet. Install the GitHub App and open a pull request to get started.</p>
+			</div>
 		}
 
 		if len(d.RepoStatsList) > 0 {
-			<h3>Per-Repository Breakdown</h3>
-			<table>
-				<thead>
-					<tr>
-						<th>Repository</th>
-						<th>Scans</th>
-						<th>Capabilities</th>
-						<th>Confirms</th>
-						<th>Reverts</th>
-					</tr>
-				</thead>
-				<tbody>
-					for _, row := range d.RepoStatsList {
-						<tr>
-							<td><a href={ templ.SafeURL(fmt.Sprintf("/dashboard/repo?repo_id=%d", row.RepoID)) }>{ row.FullName }</a></td>
-							<td>{ fmt.Sprintf("%d", row.TotalScans) }</td>
-							<td>{ fmt.Sprintf("%d", row.TotalCaps) }</td>
-							<td>{ fmt.Sprintf("%d", row.ConfirmCount) }</td>
-							<td>{ fmt.Sprintf("%d", row.RevertCount) }</td>
-						</tr>
-					}
-				</tbody>
-			</table>
-		}
-	}
-}
-
-// RepoDashboard renders the per-repo drill-down page.
-templ RepoDashboard(login, avatar, repoName string, stats *storage.RepoStats) {
-	@Page(repoName+" — Repo Dashboard", login, avatar) {
-		<hgroup>
-			<h2>{ repoName }</h2>
-			<p><a href="/dashboard">← Dashboard</a></p>
-		</hgroup>
-
-		if stats != nil {
-			<div class="stat-grid">
-				<div class="stat-card">
-					<div class="stat-value">{ fmt.Sprintf("%d", stats.TotalScans) }</div>
-					<div class="stat-label">Scans</div>
-				</div>
-				<div class="stat-card">
-					<div class="stat-value">{ fmt.Sprintf("%d", stats.TotalCaps) }</div>
-					<div class="stat-label">Capabilities</div>
-				</div>
-				<div class="stat-card">
-					<div class="stat-value">{ fmt.Sprintf("%d", stats.ConfirmCount) }</div>
-					<div class="stat-label">Confirmed</div>
-				</div>
-				<div class="stat-card">
-					<div class="stat-value">{ fmt.Sprintf("%d", stats.RevertCount) }</div>
-					<div class="stat-label">Reverted</div>
-				</div>
-			</div>
-
-			if len(stats.ByCategory) > 0 {
-				<h3>By Category</h3>
+			<div class="section-title">Per-repository breakdown</div>
+			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
-							<th>Category</th>
-							<th>Detected</th>
-							<th>Confirmed</th>
-							<th>Reverted</th>
-						</tr>
-					</thead>
-					<tbody>
-						for cat, cs := range stats.ByCategory {
-							<tr>
-								<td>{ string(cat) }</td>
-								<td>{ fmt.Sprintf("%d", cs.TotalDetected) }</td>
-								<td>{ fmt.Sprintf("%d", cs.ConfirmCount) }</td>
-								<td>{ fmt.Sprintf("%d", cs.RevertCount) }</td>
-							</tr>
-						}
-					</tbody>
-				</table>
-			}
-
-			if len(stats.ByDeveloper) > 0 {
-				<h3>By Developer</h3>
-				<table>
-					<thead>
-						<tr>
-							<th>Developer</th>
+							<th>Repository</th>
+							<th>Scans</th>
+							<th>Capabilities</th>
 							<th>Confirms</th>
 							<th>Reverts</th>
 						</tr>
 					</thead>
 					<tbody>
-						for dev, ds := range stats.ByDeveloper {
+						for _, row := range d.RepoStatsList {
 							<tr>
-								<td>{ "@" + dev }</td>
-								<td>{ fmt.Sprintf("%d", ds.ConfirmCount) }</td>
-								<td>{ fmt.Sprintf("%d", ds.RevertCount) }</td>
+								<td>
+									<a href={ templ.SafeURL(fmt.Sprintf("/dashboard/repo?repo_id=%d", row.RepoID)) }>
+										{ row.FullName }
+									</a>
+								</td>
+								<td>{ fmt.Sprintf("%d", row.TotalScans) }</td>
+								<td>{ fmt.Sprintf("%d", row.TotalCaps) }</td>
+								<td>{ fmt.Sprintf("%d", row.ConfirmCount) }</td>
+								<td>{ fmt.Sprintf("%d", row.RevertCount) }</td>
 							</tr>
 						}
 					</tbody>
 				</table>
-			}
-		} else {
-			<p>No data yet for this repository.</p>
+			</div>
 		}
 	}
 }
+
+// scanStatusPill renders a colored status badge for a scan.
+templ scanStatusPill(status storage.ScanStatus) {
+	switch status {
+	case storage.StatusPending:
+		<span class="status-pill status-pending">Pending</span>
+	case storage.StatusVerified:
+		<span class="status-pill status-verified">Verified</span>
+	default:
+		<span class="status-pill status-pending">{ string(status) }</span>
+	}
+}
+
+// RepoDashboard renders the per-repo drill-down page.
+templ RepoDashboard(login, avatar, repoName string, stats *storage.RepoStats) {
+	@Page(repoName+" — Repo", login, avatar) {
+		<div class="page-header">
+			<h2>{ repoName }</h2>
+			<p><a href="/dashboard">← Dashboard</a></p>
+		</div>
+
+		if stats != nil {
+			<div class="stats-grid">
+				<div class="stat-card">
+					<div class="stat-val">{ fmt.Sprintf("%d", stats.TotalScans) }</div>
+					<div class="stat-label">Scans</div>
+				</div>
+				<div class="stat-card">
+					<div class="stat-val">{ fmt.Sprintf("%d", stats.TotalCaps) }</div>
+					<div class="stat-label">Capabilities</div>
+				</div>
+				<div class="stat-card">
+					<div class="stat-val" style="color:var(--green)">{ fmt.Sprintf("%d", stats.ConfirmCount) }</div>
+					<div class="stat-label">Confirmed</div>
+				</div>
+				<div class="stat-card">
+					<div class="stat-val" style="color:var(--orange)">{ fmt.Sprintf("%d", stats.RevertCount) }</div>
+					<div class="stat-label">Reverted</div>
+				</div>
+			</div>
+
+			if len(stats.ByCategory) > 0 {
+				<div class="section-title">By category</div>
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr>
+								<th>Category</th>
+								<th>Detected</th>
+								<th>Confirmed</th>
+								<th>Reverted</th>
+							</tr>
+						</thead>
+						<tbody>
+							for cat, cs := range stats.ByCategory {
+								<tr>
+									<td>{ string(cat) }</td>
+									<td>{ fmt.Sprintf("%d", cs.TotalDetected) }</td>
+									<td>{ fmt.Sprintf("%d", cs.ConfirmCount) }</td>
+									<td>{ fmt.Sprintf("%d", cs.RevertCount) }</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+
+			if len(stats.ByDeveloper) > 0 {
+				<div class="section-title">By developer</div>
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr>
+								<th>Developer</th>
+								<th>Confirms</th>
+								<th>Reverts</th>
+							</tr>
+						</thead>
+						<tbody>
+							for dev, ds := range stats.ByDeveloper {
+								<tr>
+									<td>{ "@" + dev }</td>
+									<td>{ fmt.Sprintf("%d", ds.ConfirmCount) }</td>
+									<td>{ fmt.Sprintf("%d", ds.RevertCount) }</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+		} else {
+			<p style="color:var(--fg2)">No data yet for this repository.</p>
+		}
+	}
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────────
 
 func confirmRate(confirms, total int) string {
 	if total == 0 {
 		return "—"
 	}
 	return fmt.Sprintf("%d", confirms*100/total)
+}
+
+func confirmRateStyle(confirms, total int) string {
+	if total == 0 {
+		return ""
+	}
+	pct := confirms * 100 / total
+	switch {
+	case pct >= 70:
+		return "color:var(--green)"
+	case pct >= 40:
+		return ""
+	default:
+		return "color:var(--orange)"
+	}
 }
 
 func revertRate(reverts, total int) string {
@@ -203,15 +287,34 @@ func revertRate(reverts, total int) string {
 
 func rateClass(reverts, total int) string {
 	if total == 0 {
-		return "rate-green"
+		return "rate-ok"
 	}
 	pct := reverts * 100 / total
 	switch {
 	case pct < 30:
-		return "rate-green"
+		return "rate-ok"
 	case pct < 50:
-		return "rate-yellow"
+		return "rate-warn"
 	default:
-		return "rate-red"
+		return "rate-bad"
+	}
+}
+
+// timeAgo formats a past time as a human-readable relative string.
+func timeAgo(t time.Time) string {
+	since := time.Since(t)
+	switch {
+	case since < 2*time.Minute:
+		return "just now"
+	case since < time.Hour:
+		return fmt.Sprintf("%d minutes ago", int(since.Minutes()))
+	case since < 2*time.Hour:
+		return "1 hour ago"
+	case since < 24*time.Hour:
+		return fmt.Sprintf("%d hours ago", int(since.Hours()))
+	case since < 48*time.Hour:
+		return "Yesterday"
+	default:
+		return fmt.Sprintf("%d days ago", int(since.Hours()/24))
 	}
 }

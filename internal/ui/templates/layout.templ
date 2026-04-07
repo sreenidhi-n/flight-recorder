@@ -1,40 +1,63 @@
 package templates
 
-// Page renders the full HTML shell with Pico CSS, HTMX, and TASS header.
-// login is the GitHub username ("" when unauthenticated).
-// avatar is the GitHub avatar URL.
+import "strings"
+
+// userInitials extracts 1-2 uppercase initials from a GitHub login.
+// "sreenidhi" → "S", "john-doe" → "JD".
+func userInitials(login string) string {
+	if login == "" {
+		return ""
+	}
+	parts := strings.FieldsFunc(login, func(r rune) bool { return r == '-' || r == '_' })
+	if len(parts) == 0 {
+		return strings.ToUpper(login[:1])
+	}
+	init := strings.ToUpper(parts[0][:1])
+	if len(parts) > 1 && len(parts[1]) > 0 {
+		init += strings.ToUpper(parts[1][:1])
+	}
+	return init
+}
+
+// Page renders the full HTML shell: topbar, content slot, footer.
+// No CSS framework dependency — only HTMX and /static/style.css.
 templ Page(title, login, avatar string) {
 	<!DOCTYPE html>
-	<html lang="en" data-theme="auto">
+	<html lang="en">
 		<head>
 			<meta charset="UTF-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
 			<title>{ title } — TASS</title>
-			<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"/>
 			<link rel="stylesheet" href="/static/style.css"/>
 			<script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
 		</head>
 		<body>
-			<header class="tass-header">
-				<a href="/" class="logo">🔍 TASS</a>
-				<nav class="user-info">
+			<header class="topbar">
+				<a class="topbar-brand" href="/">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<circle cx="11" cy="11" r="8"></circle>
+						<path d="M21 21l-4.35-4.35"></path>
+					</svg>
+					<span>TASS</span>
+				</a>
+				<div class="topbar-right">
 					if login != "" {
 						<a href="/dashboard">Dashboard</a>
-						<img src={ avatar } alt={ login } class="avatar" referrerpolicy="no-referrer"/>
+						<div class="avatar">{ userInitials(login) }</div>
 						<span>{ "@" + login }</span>
-						<form method="post" action="/auth/logout" style="margin:0">
-							<button class="outline secondary" type="submit" style="padding:0.2rem 0.6rem;font-size:0.8rem">Logout</button>
+						<form method="post" action="/auth/logout" style="margin:0;display:inline">
+							<button type="submit" class="btn-logout">Logout</button>
 						</form>
 					} else {
-						<a href="/auth/github" role="button" class="outline">Sign in with GitHub</a>
+						<a href="/auth/github" class="btn btn-primary" style="padding:6px 20px">Sign in with GitHub</a>
 					}
-				</nav>
+				</div>
 			</header>
 			<main>
 				{ children... }
 			</main>
-			<footer style="text-align:center;margin-top:3rem;padding:1rem 0;font-size:0.8rem;color:var(--pico-secondary)">
-				<a href="https://github.com/tass-security/tass" target="_blank">TASS</a> — Trusted AI Security Scanner
+			<footer class="footer-bar">
+				TASS — Trusted AI Security Scanner
 			</footer>
 		</body>
 	</html>

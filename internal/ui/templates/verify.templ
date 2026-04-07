@@ -2,153 +2,178 @@ package templates
 
 import (
 	"fmt"
+	"strings"
 	"github.com/tass-security/tass/internal/storage"
 	"github.com/tass-security/tass/pkg/contracts"
 )
 
-// categoryEmoji returns the display emoji for a capability category.
-func categoryEmoji(cat contracts.CapCategory) string {
+// categoryBadgeClass returns the CSS class suffix for a capability badge pill.
+func categoryBadgeClass(cat contracts.CapCategory) string {
 	switch cat {
 	case contracts.CatExternalDep:
-		return "📦"
+		return "dep"
 	case contracts.CatExternalAPI:
-		return "🌐"
-	case contracts.CatDatabaseOp:
-		return "🗄️"
+		return "net"
 	case contracts.CatNetworkAccess:
-		return "🌐"
+		return "net"
+	case contracts.CatDatabaseOp:
+		return "db"
 	case contracts.CatFileSystem:
-		return "📁"
+		return "fs"
 	case contracts.CatPrivilege:
-		return "🔐"
+		return "priv"
 	default:
-		return "⚙️"
+		return "net"
 	}
 }
 
-// categoryLabel returns a human-readable label.
+// categoryLabel returns a human-readable badge label.
 func categoryLabel(cat contracts.CapCategory) string {
 	switch cat {
 	case contracts.CatExternalDep:
-		return "New Dependency"
+		return "New dependency"
 	case contracts.CatExternalAPI:
 		return "External API"
-	case contracts.CatDatabaseOp:
-		return "Database Operation"
 	case contracts.CatNetworkAccess:
-		return "Network Access"
+		return "Network access"
+	case contracts.CatDatabaseOp:
+		return "Database operation"
 	case contracts.CatFileSystem:
-		return "Filesystem Access"
+		return "Filesystem access"
 	case contracts.CatPrivilege:
-		return "Privilege Pattern"
+		return "Privilege pattern"
 	default:
 		return "Capability"
 	}
 }
 
+// evidenceLines returns at most the first 2 lines of raw evidence.
+func evidenceLines(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	lines := strings.SplitN(trimmed, "\n", 3)
+	if len(lines) > 2 {
+		lines = lines[:2]
+	}
+	return strings.Join(lines, "\n")
+}
+
 // VerifyPageData bundles everything needed to render the verify page.
 type VerifyPageData struct {
-	Scan      *storage.ScanResult
-	Decisions map[string]storage.VerificationDecision // capID → decision
-	Login     string
-	Avatar    string
-	BaseURL   string
+	Scan         *storage.ScanResult
+	Decisions    map[string]storage.VerificationDecision // capID → decision
+	Login        string
+	Avatar       string
+	BaseURL      string
+	RepoFullName string // e.g. "owner/repo" for the "View PR" link
 }
 
 // Verify renders the main verification page for a single scan.
 templ Verify(d VerifyPageData) {
 	@Page(fmt.Sprintf("PR #%d — Verify", d.Scan.PRNumber), d.Login, d.Avatar) {
-		<hgroup>
+		<div class="page-header">
 			<h2>PR #{ fmt.Sprintf("%d", d.Scan.PRNumber) } — { d.Scan.HeadBranch }</h2>
 			<p>
-				{ fmt.Sprintf("%d", d.Scan.NovelCount) } new { plural(d.Scan.NovelCount, "capability", "capabilities") } detected ·
-				<a href={ templ.SafeURL(fmt.Sprintf("https://github.com/%s/pull/%d", repoFullName(d.Scan), d.Scan.PRNumber)) } target="_blank">View PR ↗</a>
+				{ fmt.Sprintf("%d", d.Scan.NovelCount) } new { plural(d.Scan.NovelCount, "capability", "capabilities") } detected
+				if d.RepoFullName != "" {
+					· { d.RepoFullName } ·
+					<a href={ templ.SafeURL(fmt.Sprintf("https://github.com/%s/pull/%d", d.RepoFullName, d.Scan.PRNumber)) } target="_blank">View PR on GitHub ↗</a>
+				}
 			</p>
-		</hgroup>
+		</div>
 
-		@ProgressBar(len(d.Decisions), d.Scan.NovelCount)
+		<div id="progress-section">
+			@ProgressBar(len(d.Decisions), d.Scan.NovelCount)
+		</div>
+
+		<div id="all-done-banner">
+			if len(d.Decisions) == d.Scan.NovelCount && d.Scan.NovelCount > 0 && d.Scan.Status == storage.StatusVerified {
+				@SuccessBanner(d.Scan)
+			}
+		</div>
 
 		<div id="capability-list">
 			for _, cap := range d.Scan.Capabilities {
 				@CapabilityCard(cap, d.Decisions[cap.ID], d.Scan.ID, d.BaseURL)
 			}
 		</div>
-
-		if len(d.Decisions) == d.Scan.NovelCount && d.Scan.Status == storage.StatusVerified {
-			@SuccessBanner(d.Scan)
-		}
 	}
 }
 
 templ ProgressBar(decided, total int) {
-	<div style="margin-bottom:0.5rem;font-size:0.9rem;color:var(--pico-secondary)">
-		{ fmt.Sprintf("%d of %d reviewed", decided, total) }
-	</div>
-	<div class="progress-bar-wrap">
-		<div class="progress-bar-fill" style={ fmt.Sprintf("width:%d%%", progressPct(decided, total)) }></div>
+	<div class="progress-wrap">
+		<div class="progress-label">{ fmt.Sprintf("%d of %d reviewed", decided, total) }</div>
+		<div class="progress-track">
+			<div class="progress-fill" style={ fmt.Sprintf("width:%d%%", progressPct(decided, total)) }></div>
+		</div>
 	</div>
 }
 
 templ CapabilityCard(cap contracts.Capability, dec storage.VerificationDecision, scanID, baseURL string) {
 	<div
-		id={ "cap-" + cap.ID }
+		id={ "cap-" + safeID(cap.ID) }
 		class={ cardClass(dec) }
 	>
-		<span class="cap-badge">{ categoryEmoji(cap.Category) } { categoryLabel(cap.Category) }</span>
-		<h4 style="margin:0.25rem 0">{ cap.Name }</h4>
-		if cap.Location.File != "" {
-			<small style="color:var(--pico-secondary)">
-				{ cap.Location.File }
-				if cap.Location.Line > 0 {
-					:{ fmt.Sprintf("%d", cap.Location.Line) }
+		<div class="cap-row">
+			<div class="cap-left">
+				<div class={ "cap-badge " + categoryBadgeClass(cap.Category) }>{ categoryLabel(cap.Category) }</div>
+				<div class="cap-name">{ cap.Name }</div>
+				if cap.Location.File != "" {
+					<div class="cap-loc">
+						{ cap.Location.File }
+						if cap.Location.Line > 0 {
+							:{ fmt.Sprintf("%d", cap.Location.Line) }
+						}
+						· { string(cap.Source) }
+					</div>
 				}
-				· { string(cap.Source) }
-			</small>
-		}
-		if cap.RawEvidence != "" {
-			<details style="margin-top:0.5rem">
-				<summary>Show evidence</summary>
-				<pre style="font-size:0.8rem;overflow-x:auto"><code>{ cap.RawEvidence }</code></pre>
-			</details>
-		}
-
-		if dec.ID == "" {
-			<div class="action-row">
-				<button
-					hx-post={ baseURL + "/api/verify" }
-					hx-vals={ fmt.Sprintf(`{"scan_id":%q,"capability_id":%q,"decision":"confirm"}`, scanID, cap.ID) }
-					hx-target={ "#cap-" + cap.ID }
-					hx-swap="outerHTML"
-					hx-include="[name=decided_by]"
-					class="outline"
-					style="color:#22c55e;border-color:#22c55e"
-				>✅ Confirm</button>
-				<button
-					hx-post={ baseURL + "/api/verify" }
-					hx-vals={ fmt.Sprintf(`{"scan_id":%q,"capability_id":%q,"decision":"revert"}`, scanID, cap.ID) }
-					hx-target={ "#cap-" + cap.ID }
-					hx-swap="outerHTML"
-					hx-include="[name=decided_by]"
-					class="outline"
-					style="color:#f97316;border-color:#f97316"
-				>↩️ Revert</button>
+				if evidenceLines(cap.RawEvidence) != "" {
+					<div class="cap-evidence">{ evidenceLines(cap.RawEvidence) }</div>
+				}
 			</div>
-		} else {
-			<p style="margin-top:0.75rem;font-size:0.9rem">
+			if dec.ID == "" {
+				<div class="cap-actions">
+					<button
+						hx-post="/ui/verify"
+						hx-vals={ fmt.Sprintf(`{"scan_id":%q,"capability_id":%q,"decision":"confirm"}`, scanID, cap.ID) }
+						hx-target={ "#cap-" + safeID(cap.ID) }
+						hx-swap="outerHTML"
+						class="btn btn-confirm"
+					>Confirm</button>
+					<button
+						hx-post="/ui/verify"
+						hx-vals={ fmt.Sprintf(`{"scan_id":%q,"capability_id":%q,"decision":"revert"}`, scanID, cap.ID) }
+						hx-target={ "#cap-" + safeID(cap.ID) }
+						hx-swap="outerHTML"
+						class="btn btn-revert"
+					>Revert</button>
+				</div>
+			} else {
 				if string(dec.Decision) == "confirm" {
-					✅ Confirmed by { dec.DecidedBy }
+					<div class="decided-label">
+						<svg width="14" height="14" viewBox="0 0 16 16" fill="var(--green)"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.78 5.22a.75.75 0 00-1.06 0L7 8.94 5.28 7.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.25-4.25a.75.75 0 000-1.06z"></path></svg>
+						Confirmed by @{ dec.DecidedBy }
+					</div>
 				} else {
-					↩️ Reverted by { dec.DecidedBy }
+					<div class="decided-label">
+						<svg width="14" height="14" viewBox="0 0 16 16" fill="var(--orange)"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zM5.72 5.72a.75.75 0 011.06 0L8 6.94l1.22-1.22a.75.75 0 111.06 1.06L9.06 8l1.22 1.22a.75.75 0 11-1.06 1.06L8 9.06l-1.22 1.22a.75.75 0 01-1.06-1.06L6.94 8 5.72 6.78a.75.75 0 010-1.06z"></path></svg>
+						Reverted by @{ dec.DecidedBy }
+					</div>
 				}
-			</p>
-		}
+			}
+		</div>
 	</div>
 }
 
 templ SuccessBanner(scan *storage.ScanResult) {
 	<div class="success-banner">
-		<strong>✅ All capabilities reviewed!</strong><br/>
-		The manifest has been committed to the PR branch and the check is passing.
+		<svg width="18" height="18" viewBox="0 0 16 16" fill="var(--green)"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.78 5.22a.75.75 0 00-1.06 0L7 8.94 5.28 7.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.25-4.25a.75.75 0 000-1.06z"></path></svg>
+		<div>
+			<strong>All capabilities reviewed!</strong>
+			<p>The manifest has been committed to the PR branch and the check is passing.</p>
+		</div>
 	</div>
 }
 
@@ -165,13 +190,12 @@ templ CapabilityCardFragment(cap contracts.Capability, dec storage.VerificationD
 	}
 }
 
-// helper functions
+// ── helpers ──────────────────────────────────────────────────────────────────
 
-func repoFullName(scan *storage.ScanResult) string {
-	// ScanResult doesn't carry full name directly; reconstruct from ID prefix
-	// ID format: "scan-{owner}-{repo}-{pr}-{sha}"
-	// We fall back gracefully — this is only used for the GitHub link.
-	return ""
+// safeID converts a capability ID to a CSS-safe string for use in id attributes
+// and hx-target selectors. Colons are invalid in CSS selectors.
+func safeID(id string) string {
+	return strings.ReplaceAll(id, ":", "-")
 }
 
 func cardClass(dec storage.VerificationDecision) string {

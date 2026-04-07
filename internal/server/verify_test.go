@@ -73,6 +73,9 @@ func (m *serverMemStore) GetStats(_ context.Context, _ int64) (*storage.RepoStat
 func (m *serverMemStore) GetStatsByInstallation(_ context.Context, _ int64) (*storage.InstallationStats, error) {
 	return nil, nil
 }
+func (m *serverMemStore) GetRecentScans(_ context.Context, _ int64, _ int) ([]storage.RecentScan, error) {
+	return nil, nil
+}
 func (m *serverMemStore) Close() error { return nil }
 
 // --- helpers ---
