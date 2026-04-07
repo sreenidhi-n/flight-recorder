@@ -16,3 +16,5 @@ tass.db
 
 # Build output
 dist/
+
+flight-rec-docs/
