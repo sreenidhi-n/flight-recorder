@@ -1,67 +1,30 @@
-# fly.toml — TASS deployment configuration for Fly.io
-# Deploy with: fly deploy
+# fly.toml — TASS on Fly.io
+# Deploy: fly deploy
 
-app = "tass-security"
-primary_region = "iad"  # Change to your nearest region
+app    = "tass-test"
+primary_region = "ord"
 
 [build]
 
 [env]
-  TASS_BASE_URL = "https://app.tass.dev"
+  TASS_BASE_URL = "https://tass-test.fly.dev"
 
-# Persistent volume for SQLite database.
 [mounts]
-  source = "tass_data"
+  source      = "tass_data"
   destination = "/data"
 
-[[services]]
-  protocol = "tcp"
-  internal_port = 8080
-  auto_stop_machines = "off"   # Must stay on to receive webhooks 24/7
+[http_service]
+  internal_port       = 8080
+  force_https         = true
+  auto_stop_machines  = "off"
   auto_start_machines = true
   min_machines_running = 1
 
-  [[services.ports]]
-    port = 80
-    handlers = ["http"]
-    force_https = true
-
-  [[services.ports]]
-    port = 443
-    handlers = ["tls", "http"]
-
-  [services.concurrency]
-    type = "connections"
+  [http_service.concurrency]
+    type       = "connections"
     hard_limit = 200
     soft_limit = 150
 
-  [[services.tcp_checks]]
-    interval = "15s"
-    timeout = "2s"
-    grace_period = "5s"
-
-  [[services.http_checks]]
-    interval = "30s"
-    timeout = "5s"
-    grace_period = "10s"
-    method = "get"
-    path = "/health"
-    protocol = "http"
-
-[checks]
-  [checks.health]
-    port = 8080
-    type = "http"
-    interval = "30s"
-    timeout = "5s"
-    grace_period = "10s"
-    method = "get"
-    path = "/health"
-
-# Fly secrets (set with `fly secrets set`):
-#   TASS_GITHUB_APP_ID=<your_app_id>
-#   TASS_GITHUB_PRIVATE_KEY_PATH=/app/private-key.pem
-#   TASS_GITHUB_WEBHOOK_SECRET=<webhook_secret>
-#   TASS_GITHUB_CLIENT_ID=<oauth_client_id>
-#   TASS_GITHUB_CLIENT_SECRET=<oauth_client_secret>
-#   TASS_SESSION_SECRET=<random_32+_bytes>
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "256mb"
