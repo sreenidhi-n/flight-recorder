@@ -295,6 +295,7 @@ func (h *UIVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	scanID := r.FormValue("scan_id")
 	capID := r.FormValue("capability_id")
 	decisionStr := r.FormValue("decision")
+	justification := r.FormValue("justification")
 
 	if scanID == "" || capID == "" {
 		http.Error(w, "scan_id and capability_id required", http.StatusBadRequest)
@@ -315,7 +316,7 @@ func (h *UIVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		decision = contracts.DecisionRevert
 	}
 
-	result, err := h.verifier.Decide(r.Context(), scanID, capID, decision, "", decidedBy)
+	result, err := h.verifier.Decide(r.Context(), scanID, capID, decision, justification, decidedBy)
 	if err != nil {
 		slog.Error("ui verify: decide", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

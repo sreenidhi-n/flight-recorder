@@ -480,14 +480,36 @@ func CapabilityCard(cap contracts.Capability, dec storage.VerificationDecision, 
 			return templ_7745c5c3_Err
 		}
 		if dec.ID == "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "<div class=\"cap-actions\"><button hx-post=\"/ui/verify\" hx-vals=\"")
+			// Render note input ID
+			var templ_7745c5c3_NoteID string
+			templ_7745c5c3_NoteID, templ_7745c5c3_Err = templ.JoinStringErrs("note-" + safeID(cap.ID))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/verify.templ`, Line: 138, Col: 10}
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "<div class=\"cap-actions\"><input type=\"text\" name=\"justification\" placeholder=\"Optional note\u2026\" style=\"font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);width:180px\" id=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_NoteID))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "\"> <button hx-post=\"/ui/verify\" hx-include=\"#")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_NoteID))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "\" hx-vals=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var24 string
 			templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf(`{"scan_id":%q,"capability_id":%q,"decision":"confirm"}`, scanID, cap.ID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/verify.templ`, Line: 140, Col: 101}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/verify.templ`, Line: 145, Col: 101}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 			if templ_7745c5c3_Err != nil {
@@ -500,20 +522,28 @@ func CapabilityCard(cap contracts.Capability, dec storage.VerificationDecision, 
 			var templ_7745c5c3_Var25 string
 			templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs("#cap-" + safeID(cap.ID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/verify.templ`, Line: 141, Col: 42}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/verify.templ`, Line: 146, Col: 42}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "\" hx-swap=\"outerHTML\" class=\"btn btn-confirm\">Confirm</button> <button hx-post=\"/ui/verify\" hx-vals=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "\" hx-swap=\"outerHTML\" class=\"btn btn-confirm\">Confirm</button> <button hx-post=\"/ui/verify\" hx-include=\"#")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_NoteID))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "\" hx-vals=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var26 string
 			templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf(`{"scan_id":%q,"capability_id":%q,"decision":"revert"}`, scanID, cap.ID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/verify.templ`, Line: 147, Col: 100}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/verify.templ`, Line: 152, Col: 100}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 			if templ_7745c5c3_Err != nil {
@@ -526,7 +556,7 @@ func CapabilityCard(cap contracts.Capability, dec storage.VerificationDecision, 
 			var templ_7745c5c3_Var27 string
 			templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs("#cap-" + safeID(cap.ID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/verify.templ`, Line: 148, Col: 42}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/verify.templ`, Line: 153, Col: 42}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 			if templ_7745c5c3_Err != nil {
@@ -667,9 +697,11 @@ func CapabilityCardFragment(cap contracts.Capability, dec storage.VerificationDe
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 // safeID converts a capability ID to a CSS-safe string for use in id attributes
-// and hx-target selectors. Colons are invalid in CSS selectors.
+// and hx-target selectors. Colons, slashes, and dots are all invalid in unquoted
+// CSS ID selectors used by HTMX's hx-target.
 func safeID(id string) string {
-	return strings.ReplaceAll(id, ":", "-")
+	r := strings.NewReplacer(":", "-", "/", "-", ".", "-")
+	return r.Replace(id)
 }
 
 func cardClass(dec storage.VerificationDecision) string {

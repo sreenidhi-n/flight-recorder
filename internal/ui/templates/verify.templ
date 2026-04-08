@@ -135,8 +135,16 @@ templ CapabilityCard(cap contracts.Capability, dec storage.VerificationDecision,
 			</div>
 			if dec.ID == "" {
 				<div class="cap-actions">
+					<input
+						type="text"
+						id={ "note-" + safeID(cap.ID) }
+						name="justification"
+						placeholder="Optional note…"
+						style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);width:180px"
+					/>
 					<button
 						hx-post="/ui/verify"
+						hx-include={ "#note-" + safeID(cap.ID) }
 						hx-vals={ fmt.Sprintf(`{"scan_id":%q,"capability_id":%q,"decision":"confirm"}`, scanID, cap.ID) }
 						hx-target={ "#cap-" + safeID(cap.ID) }
 						hx-swap="outerHTML"
@@ -144,6 +152,7 @@ templ CapabilityCard(cap contracts.Capability, dec storage.VerificationDecision,
 					>Confirm</button>
 					<button
 						hx-post="/ui/verify"
+						hx-include={ "#note-" + safeID(cap.ID) }
 						hx-vals={ fmt.Sprintf(`{"scan_id":%q,"capability_id":%q,"decision":"revert"}`, scanID, cap.ID) }
 						hx-target={ "#cap-" + safeID(cap.ID) }
 						hx-swap="outerHTML"
@@ -193,9 +202,11 @@ templ CapabilityCardFragment(cap contracts.Capability, dec storage.VerificationD
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 // safeID converts a capability ID to a CSS-safe string for use in id attributes
-// and hx-target selectors. Colons are invalid in CSS selectors.
+// and hx-target selectors. Colons, slashes, and dots are all invalid in unquoted
+// CSS ID selectors used by HTMX's hx-target.
 func safeID(id string) string {
-	return strings.ReplaceAll(id, ":", "-")
+	r := strings.NewReplacer(":", "-", "/", "-", ".", "-")
+	return r.Replace(id)
 }
 
 func cardClass(dec storage.VerificationDecision) string {
