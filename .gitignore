@@ -2,19 +2,25 @@
 .env.local
 *.pem
 
-# Runtime artifacts
-tass
+# Runtime artifacts — anchor /tass so it only matches the root binary,
+# not paths like cmd/tass/ or pkg/tassignore/
+/tass
 tass.db
 *.db
+*.db-shm
+*.db-wal
 
 # macOS
 .DS_Store
 **/.DS_Store
 
-# Editor history
+# Editor history and local IDE artifacts
 .history/
+.vscode/
 
 # Build output
 dist/
 
+# Local docs and design files not for the repo
 flight-rec-docs/
+scenarios/
