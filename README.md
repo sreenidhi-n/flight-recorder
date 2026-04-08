@@ -121,6 +121,41 @@ See [CLAUDE.md](CLAUDE.md) for the full implementation roadmap.
 
 ---
 
+## .tassignore
+
+Exclude files and directories from TASS capability scanning by creating a
+`.tassignore` file in your repository root. The syntax is identical to
+`.gitignore`:
+
+```gitignore
+# Exclude vendored code
+vendor/
+node_modules/
+.venv/
+
+# Exclude test files
+*_test.go
+**/*.spec.js
+**/*.spec.py
+
+# Exclude generated code
+*.pb.go
+```
+
+**Supported patterns:**
+- Glob patterns: `*.test.js`, `**/*.spec.py`
+- Directory patterns ending in `/`: `vendor/`, `node_modules/`
+- Negation: `!important.go` (un-ignores a path matched by an earlier rule)
+- Comments: `# this is a comment`
+- Blank lines are ignored
+
+The `.tassignore` file is respected by:
+- `tass init` — baseline scan
+- `tass scan` — local diff scan
+- The GitHub App — webhook-triggered PR scans
+
+---
+
 ## License
 
 MIT

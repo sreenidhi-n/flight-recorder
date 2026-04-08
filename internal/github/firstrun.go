@@ -95,7 +95,13 @@ func (p *FirstRunPipeline) processRepo(ctx context.Context, installationID int64
 		headFiles[k] = v
 	}
 
-	cs, _ := p.sc.ScanRemote(headFiles, nil)
+	// Fetch .tassignore if present.
+	var tassIgnoreContent []byte
+	if ignoreBytes, ferr := p.app.FetchFileContent(ctx, token, owner, repoName, ".tassignore", meta.headSHA); ferr == nil && ignoreBytes != nil {
+		tassIgnoreContent = ignoreBytes
+	}
+
+	cs, _ := p.sc.ScanRemote(headFiles, nil, tassIgnoreContent)
 
 	var caps []contracts.Capability
 	if cs != nil {

@@ -59,6 +59,7 @@ type Handlers struct {
 	UIVerify      http.Handler // POST /ui/verify   (form + HTML — HTMX)
 	APIStats      http.Handler // GET  /api/stats
 	APIAudit      http.Handler // GET  /api/audit + /api/audit/export
+	APIPolicy     http.Handler // GET  /api/policy
 	Index         http.Handler // GET  /
 	VerifyPage    http.Handler // GET  /verify/
 	Dashboard     http.Handler // GET  /dashboard
@@ -118,6 +119,7 @@ func BuildMux(h Handlers) *http.ServeMux {
 	mux.Handle("/api/stats", h.APIStats)
 	mux.Handle("/api/audit/export", h.APIAudit)
 	mux.Handle("/api/audit", h.APIAudit)
+	mux.Handle("/api/policy", h.APIPolicy)
 
 	// Web UI pages (authenticated)
 	mux.Handle("/verify/", h.VerifyPage)

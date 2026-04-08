@@ -24,6 +24,7 @@ func runScan(args []string) (int, error) {
 	format := fs.String("format", "text", "output format: text or json")
 	rulesDir := fs.String("rules-dir", "./rules", "path to rules directory")
 	path := fs.String("path", ".", "path to repo root")
+	ci := fs.Bool("ci", false, "emit GitHub Actions annotations (::warning::) alongside output")
 	if err := fs.Parse(args); err != nil {
 		return 1, fmt.Errorf("tass scan: %w", err)
 	}
@@ -78,10 +79,14 @@ func runScan(args []string) (int, error) {
 	novel := manifest.Diff(*cs, existing)
 
 	if len(novel) == 0 {
-		if *format == "text" {
-			color.Green("✓  No novel capabilities detected.")
-		} else {
+		switch *format {
+		case "json":
 			fmt.Println("[]")
+		default:
+			color.Green("✓  No novel capabilities detected.")
+			if *ci {
+				fmt.Println("::notice::TASS: no novel capabilities detected — all clear.")
+			}
 		}
 		return 0, nil
 	}
@@ -94,6 +99,20 @@ func runScan(args []string) (int, error) {
 		if err := enc.Encode(novel); err != nil {
 			return 1, fmt.Errorf("tass scan: encode json: %w", err)
 		}
+		if *ci {
+			// Emit GitHub Actions annotations on stderr.
+			for _, c := range novel {
+				file := c.Location.File
+				line := c.Location.Line
+				if line > 0 {
+					fmt.Fprintf(os.Stderr, "::warning file=%s,line=%d::TASS: novel capability %q (%s)\n",
+						file, line, c.Name, c.Category)
+				} else {
+					fmt.Fprintf(os.Stderr, "::warning file=%s::TASS: novel capability %q (%s)\n",
+						file, c.Name, c.Category)
+				}
+			}
+		}
 
 	default: // "text"
 		header := color.New(color.FgYellow, color.Bold).SprintfFunc()
@@ -103,7 +122,7 @@ func runScan(args []string) (int, error) {
 		fmt.Printf("\n%s\n\n", header("TASS scan — %d novel %s detected",
 			len(novel), plural(len(novel), "capability", "capabilities")))
 
-		for _, c := range novel {
+		for i, c := range novel {
 			fmt.Printf("  + %s  [%s]\n", capID("%-50s", c.ID), c.Category)
 			fmt.Printf("    Name:       %s\n", c.Name)
 			file := c.Location.File
@@ -113,6 +132,19 @@ func runScan(args []string) (int, error) {
 			fmt.Printf("    File:       %s\n", loc(file))
 			fmt.Printf("    Confidence: %.0f%%\n", c.Confidence*100)
 			fmt.Println()
+
+			if *ci {
+				// Emit GitHub Actions annotation for each novel cap.
+				if c.Location.Line > 0 {
+					fmt.Fprintf(os.Stderr,
+						"::warning file=%s,line=%d,title=TASS #%d::Novel capability %q (%s) — not in manifest\n",
+						c.Location.File, c.Location.Line, i+1, c.Name, c.Category)
+				} else {
+					fmt.Fprintf(os.Stderr,
+						"::warning title=TASS #%d::Novel capability %q (%s) — not in manifest\n",
+						i+1, c.Name, c.Category)
+				}
+			}
 		}
 
 		fmt.Println("Open a PR and let the TASS GitHub App handle verification,")

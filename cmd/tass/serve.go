@@ -106,9 +106,10 @@ func runServe(args []string) error {
 	verifier := gh.NewVerifier(app, store, baseURL)
 	verifyHandler := server.NewVerifyHandler(verifier)
 
-	// --- Stats + Audit handlers ---
+	// --- Stats + Audit + Policy handlers ---
 	statsHandler := server.NewStatsHandler(store)
 	auditAPIHandler := server.NewAuditHandler(store)
+	policyAPIHandler := server.NewPolicyHandler(store)
 
 	// --- UI handlers ---
 	indexHandler := ui.NewIndexHandler(sessions)
@@ -126,6 +127,7 @@ func runServe(args []string) error {
 		UIVerify:      uiVerifyHandler,
 		APIStats:      statsHandler,
 		APIAudit:      auditAPIHandler,
+		APIPolicy:     policyAPIHandler,
 		Index:         indexHandler,
 		VerifyPage:    verifyPageHandler,
 		Dashboard:     server.RequireAuthMiddleware(sessions, dashboardHandler),

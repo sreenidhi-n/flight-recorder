@@ -15,9 +15,11 @@ import (
 	"github.com/a-h/templ"
 	"github.com/tass-security/tass/internal/auth"
 	gh "github.com/tass-security/tass/internal/github"
+	"github.com/tass-security/tass/internal/policy"
 	"github.com/tass-security/tass/internal/storage"
 	"github.com/tass-security/tass/internal/ui/templates"
 	"github.com/tass-security/tass/pkg/contracts"
+	"github.com/tass-security/tass/pkg/manifest"
 )
 
 //go:embed static/*
@@ -202,8 +204,13 @@ func (h *RepoDashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	ctx := r.Context()
 	repo, _ := h.store.GetRepository(ctx, repoID)
 	repoName := fmt.Sprintf("repo #%d", repoID)
+	appName := "myapp"
 	if repo != nil {
 		repoName = repo.FullName
+		parts := strings.SplitN(repo.FullName, "/", 2)
+		if len(parts) == 2 {
+			appName = parts[1]
+		}
 	}
 
 	stats, err := h.store.GetStats(ctx, repoID)
@@ -211,7 +218,21 @@ func (h *RepoDashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		slog.Error("repo dashboard: get stats", "repo_id", repoID, "error", err)
 	}
 
-	render(w, r, http.StatusOK, templates.RepoDashboard(sess.GitHubLogin, sess.AvatarURL, repoName, stats))
+	// Generate policies from the latest committed manifest.
+	var netpolYAML, iamJSON string
+	if history, herr := h.store.GetManifestHistory(ctx, repoID, 1); herr == nil && len(history) > 0 {
+		if m, merr := manifest.LoadBytes([]byte(history[0].ContentYAML)); merr == nil {
+			opts := policy.PolicyOpts{AppName: appName}
+			if b, perr := policy.GenerateNetworkPolicy(m, opts); perr == nil {
+				netpolYAML = string(b)
+			}
+			if b, perr := policy.GenerateIAMPolicy(m, opts); perr == nil {
+				iamJSON = string(b)
+			}
+		}
+	}
+
+	render(w, r, http.StatusOK, templates.RepoDashboard(sess.GitHubLogin, sess.AvatarURL, repoName, stats, repoID, netpolYAML, iamJSON))
 }
 
 // SetupHandler serves GET /setup?installation_id=N — post-install page.

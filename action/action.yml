@@ -1,0 +1,48 @@
+name: 'TASS Security Scan'
+description: 'Scan pull requests for newly introduced capabilities in AI-generated code. No code leaves your infrastructure.'
+author: 'TASS Security'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  manifest-path:
+    description: 'Path to tass.manifest.yaml'
+    required: false
+    default: 'tass.manifest.yaml'
+  rules-dir:
+    description: 'Path to rules directory (bundled rules used if not specified)'
+    required: false
+    default: '/app/rules'
+  base-ref:
+    description: 'Base branch to diff against'
+    required: false
+    default: ${{ github.base_ref }}
+  export-to:
+    description: 'Optional URL to export CapabilitySet to a hosted TASS dashboard (hybrid mode)'
+    required: false
+    default: ''
+  export-token:
+    description: 'API token for the export-to endpoint'
+    required: false
+    default: ''
+  fail-on-novel:
+    description: 'Exit with code 1 when novel capabilities are detected (default: true)'
+    required: false
+    default: 'true'
+
+outputs:
+  novel-count:
+    description: 'Number of novel capabilities detected'
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  env:
+    MANIFEST_PATH: ${{ inputs.manifest-path }}
+    RULES_DIR: ${{ inputs.rules-dir }}
+    BASE_REF: ${{ inputs.base-ref }}
+    EXPORT_TO: ${{ inputs.export-to }}
+    EXPORT_TOKEN: ${{ inputs.export-token }}
+    FAIL_ON_NOVEL: ${{ inputs.fail-on-novel }}

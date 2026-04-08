@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tass-security/tass/pkg/contracts"
+	"github.com/tass-security/tass/pkg/tassignore"
 )
 
 // skipDirs is the set of directory names to skip during repo walks.
@@ -56,6 +57,12 @@ func New(registry map[string]DepParser, astScanner *ASTScanner) *Scanner {
 // ScanRepo performs a full scan of a local repository: all dependency files
 // (Layer 0) and all source files (Layer 1). Used by `tass init` and dogfooding.
 func (s *Scanner) ScanRepo(repoRoot string) (*contracts.CapabilitySet, error) {
+	ignore, err := tassignore.Load(repoRoot)
+	if err != nil {
+		slog.Warn("scanner.ScanRepo: load .tassignore failed, continuing without it", "err", err)
+		ignore = tassignore.LoadBytes(nil)
+	}
+
 	seen := make(map[string]struct{})
 	var caps []contracts.Capability
 
@@ -65,13 +72,16 @@ func (s *Scanner) ScanRepo(repoRoot string) (*contracts.CapabilitySet, error) {
 		return nil, fmt.Errorf("scanner.ScanRepo: layer0: %w", err)
 	}
 	for _, c := range l0caps {
+		if ignore.ShouldIgnore(c.Location.File) {
+			continue
+		}
 		seen[c.ID] = struct{}{}
 		caps = append(caps, c)
 	}
 
 	// --- Layer 1: AST scan ---
 	if s.astScanner != nil {
-		l1caps, err := s.scanRepoAST(repoRoot)
+		l1caps, err := s.scanRepoAST(repoRoot, ignore)
 		if err != nil {
 			return nil, fmt.Errorf("scanner.ScanRepo: layer1: %w", err)
 		}
@@ -99,6 +109,12 @@ func (s *Scanner) ScanRepo(repoRoot string) (*contracts.CapabilitySet, error) {
 //
 // In production (Phase 3), ScanRemote replaces this for webhook-triggered scans.
 func (s *Scanner) ScanDiff(repoRoot, baseBranch string) (*contracts.CapabilitySet, error) {
+	ignore, err := tassignore.Load(repoRoot)
+	if err != nil {
+		slog.Warn("scanner.ScanDiff: load .tassignore failed, continuing without it", "err", err)
+		ignore = tassignore.LoadBytes(nil)
+	}
+
 	changedFiles, err := gitChangedFiles(repoRoot, baseBranch)
 	if err != nil {
 		return nil, fmt.Errorf("scanner.ScanDiff: %w", err)
@@ -118,6 +134,10 @@ func (s *Scanner) ScanDiff(repoRoot, baseBranch string) (*contracts.CapabilitySe
 
 	// --- Layer 0: diff changed dependency files ---
 	for _, relFile := range changedFiles {
+		if ignore.ShouldIgnore(relFile) {
+			slog.Debug("scanner.ScanDiff: skipped by .tassignore", "file", relFile)
+			continue
+		}
 		filename := filepath.Base(relFile)
 		parser, ok := s.registry[filename]
 		if !ok {
@@ -157,6 +177,9 @@ func (s *Scanner) ScanDiff(repoRoot, baseBranch string) (*contracts.CapabilitySe
 	// --- Layer 1: AST scan changed source files ---
 	if s.astScanner != nil {
 		for _, relFile := range changedFiles {
+			if ignore.ShouldIgnore(relFile) {
+				continue
+			}
 			lang, ok := extToLang[strings.ToLower(filepath.Ext(relFile))]
 			if !ok {
 				continue
@@ -202,12 +225,33 @@ func (s *Scanner) ScanDiff(repoRoot, baseBranch string) (*contracts.CapabilitySe
 // Because DepParser and ASTScanner both operate on []byte, this implementation
 // requires no filesystem access. Source code is processed in memory only and
 // never written to disk or stored — only the resulting CapabilitySet is kept.
-func (s *Scanner) ScanRemote(headFiles, baseDeps map[string][]byte) (*contracts.CapabilitySet, error) {
+// ScanRemote scans files provided as raw bytes — the primary path for Phase 3
+// webhook-triggered scans where files are fetched from the GitHub API.
+//
+// headFiles: map of repo-relative path → current file content (changed files only).
+// baseDeps: map of dep file path → base branch content (nil value = new file in PR).
+// ignoreContent: optional raw bytes of a .tassignore file fetched from the repo root.
+//
+// Because DepParser and ASTScanner both operate on []byte, this implementation
+// requires no filesystem access. Source code is processed in memory only and
+// never written to disk or stored — only the resulting CapabilitySet is kept.
+func (s *Scanner) ScanRemote(headFiles, baseDeps map[string][]byte, ignoreContent ...[]byte) (*contracts.CapabilitySet, error) {
+	var ignore *tassignore.Matcher
+	if len(ignoreContent) > 0 && ignoreContent[0] != nil {
+		ignore = tassignore.LoadBytes(ignoreContent[0])
+	} else {
+		ignore = tassignore.LoadBytes(nil)
+	}
+
 	seen := make(map[string]struct{})
 	var caps []contracts.Capability
 
 	// --- Layer 0: dependency file diffing ---
 	for path, headContent := range headFiles {
+		if ignore.ShouldIgnore(path) {
+			slog.Debug("scanner.ScanRemote: skipped by .tassignore", "file", path)
+			continue
+		}
 		filename := filepath.Base(path)
 		parser, ok := s.registry[filename]
 		if !ok {
@@ -235,6 +279,9 @@ func (s *Scanner) ScanRemote(headFiles, baseDeps map[string][]byte) (*contracts.
 	// --- Layer 1: AST scan source files ---
 	if s.astScanner != nil {
 		for path, content := range headFiles {
+			if ignore.ShouldIgnore(path) {
+				continue
+			}
 			lang, ok := extToLang[strings.ToLower(filepath.Ext(path))]
 			if !ok {
 				continue
@@ -309,7 +356,8 @@ func (s *Scanner) scanRepoDeps(repoRoot string) ([]contracts.Capability, error) 
 }
 
 // scanRepoAST walks repoRoot and AST-scans all known source files (Layer 1).
-func (s *Scanner) scanRepoAST(repoRoot string) ([]contracts.Capability, error) {
+// Files matched by the ignore matcher are skipped.
+func (s *Scanner) scanRepoAST(repoRoot string, ignore *tassignore.Matcher) ([]contracts.Capability, error) {
 	var caps []contracts.Capability
 	seen := make(map[string]struct{})
 
@@ -329,13 +377,18 @@ func (s *Scanner) scanRepoAST(repoRoot string) ([]contracts.Capability, error) {
 			return nil
 		}
 
+		rel := relPath(repoRoot, path)
+		if ignore.ShouldIgnore(rel) {
+			slog.Debug("scanner.scanRepoAST: skipped by .tassignore", "file", rel)
+			return nil
+		}
+
 		content, err := os.ReadFile(path)
 		if err != nil {
 			slog.Warn("scanner: source read failed, skipping", "file", path, "err", err)
 			return nil
 		}
 
-		rel := relPath(repoRoot, path)
 		fileCaps, err := s.astScanner.ScanBytes(content, rel, lang)
 		if err != nil {
 			slog.Warn("scanner: AST scan failed, skipping", "file", path, "err", err)

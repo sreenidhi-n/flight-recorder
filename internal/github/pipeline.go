@@ -146,8 +146,16 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 		}
 	}
 
+	// --- 7b. Fetch .tassignore from repo root (optional; HEAD ref) ---
+	var tassIgnoreContent []byte
+	if ignoreBytes, ferr := p.app.FetchFileContent(
+		ctx, token, owner, repo, ".tassignore", req.HeadSHA); ferr == nil && ignoreBytes != nil {
+		tassIgnoreContent = ignoreBytes
+		log.Info("pipeline: loaded .tassignore", "bytes", len(tassIgnoreContent))
+	}
+
 	// --- 8. Run scanner ---
-	capSet, err := p.sc.ScanRemote(headFiles, baseDeps)
+	capSet, err := p.sc.ScanRemote(headFiles, baseDeps, tassIgnoreContent)
 	if err != nil {
 		log.Error("pipeline: scan remote", "error", err)
 		p.failCheck(ctx, token, owner, repo, checkRunID, "Scanner error")

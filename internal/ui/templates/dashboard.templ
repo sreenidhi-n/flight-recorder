@@ -178,7 +178,7 @@ templ scanStatusPill(status storage.ScanStatus) {
 }
 
 // RepoDashboard renders the per-repo drill-down page.
-templ RepoDashboard(login, avatar, repoName string, stats *storage.RepoStats) {
+templ RepoDashboard(login, avatar, repoName string, stats *storage.RepoStats, repoID int64, netpolYAML, iamJSON string) {
 	@Page(repoName+" — Repo", login, avatar) {
 		<div class="page-header">
 			<h2>{ repoName }</h2>
@@ -256,6 +256,50 @@ templ RepoDashboard(login, avatar, repoName string, stats *storage.RepoStats) {
 			}
 		} else {
 			<p style="color:var(--fg2)">No data yet for this repository.</p>
+		}
+
+		if netpolYAML != "" || iamJSON != "" {
+			<div class="section-title">Generated Policies</div>
+			<p style="color:var(--fg2);font-size:13px;margin-bottom:16px">
+				Auto-generated from the confirmed manifest capabilities.
+				Review and narrow before deploying to production.
+			</p>
+			if netpolYAML != "" {
+				<div style="margin-bottom:24px">
+					<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+						<strong style="font-size:13px">Kubernetes NetworkPolicy</strong>
+						<div style="display:flex;gap:8px">
+							<a href={ templ.SafeURL(fmt.Sprintf("/api/policy?repo_id=%d&format=k8s", repoID)) }
+								style="font-size:12px;color:var(--fg2)"
+								download="network-policy.yaml">↓ Download</a>
+							<button
+								onclick="navigator.clipboard.writeText(document.getElementById('netpol-code').textContent)"
+								style="font-size:12px;background:none;border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;color:var(--fg)">
+								Copy
+							</button>
+						</div>
+					</div>
+					<pre id="netpol-code" style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:16px;overflow-x:auto;font-size:12px;line-height:1.5;font-family:monospace">{ netpolYAML }</pre>
+				</div>
+			}
+			if iamJSON != "" {
+				<div>
+					<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+						<strong style="font-size:13px">AWS IAM Policy</strong>
+						<div style="display:flex;gap:8px">
+							<a href={ templ.SafeURL(fmt.Sprintf("/api/policy?repo_id=%d&format=iam", repoID)) }
+								style="font-size:12px;color:var(--fg2)"
+								download="iam-policy.json">↓ Download</a>
+							<button
+								onclick="navigator.clipboard.writeText(document.getElementById('iam-code').textContent)"
+								style="font-size:12px;background:none;border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;color:var(--fg)">
+								Copy
+							</button>
+						</div>
+					</div>
+					<pre id="iam-code" style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:16px;overflow-x:auto;font-size:12px;line-height:1.5;font-family:monospace">{ iamJSON }</pre>
+				</div>
+			}
 		}
 	}
 }

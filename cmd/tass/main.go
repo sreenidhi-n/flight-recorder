@@ -42,6 +42,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
+	case "policy":
+		if err := runPolicy(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "tass: unknown command %q\n", os.Args[1])
 		printUsage()
@@ -55,6 +60,7 @@ func printUsage() {
 Commands:
   init     Generate tass.manifest.yaml from the current repository
   scan     Scan for new capabilities against a base branch
+  policy   Generate security policies (K8s NetworkPolicy, AWS IAM) from the manifest
   serve    Start the TASS web server (production)
   seed     Insert realistic demo data into the SQLite database
   version  Print version and exit
