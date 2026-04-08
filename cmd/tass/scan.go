@@ -1,16 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/fatih/color"
 	"github.com/tass-security/tass/internal/scanner"
+	"github.com/tass-security/tass/pkg/contracts"
 	"github.com/tass-security/tass/pkg/manifest"
 )
 
@@ -25,6 +30,10 @@ func runScan(args []string) (int, error) {
 	rulesDir := fs.String("rules-dir", "./rules", "path to rules directory")
 	path := fs.String("path", ".", "path to repo root")
 	ci := fs.Bool("ci", false, "emit GitHub Actions annotations (::warning::) alongside output")
+	exportTo := fs.String("export-to", "", "send results to a TASS server URL (e.g. https://tass-test.fly.dev/api/import)")
+	exportToken := fs.String("token", "", "API token for --export-to (or set TASS_IMPORT_TOKEN env var)")
+	repo := fs.String("repo", "", "repo name for --export-to, e.g. owner/my-service (auto-detected from git remote if omitted)")
+	branch := fs.String("branch", "", "branch name for --export-to (auto-detected from git if omitted)")
 	if err := fs.Parse(args); err != nil {
 		return 1, fmt.Errorf("tass scan: %w", err)
 	}
@@ -152,7 +161,120 @@ func runScan(args []string) (int, error) {
 		fmt.Println()
 	}
 
+	// --- Optional: export results to hosted dashboard ---
+	if *exportTo != "" {
+		verifyURL, exportErr := exportResults(novel, *exportTo, *exportToken, *repo, *branch, repoRoot)
+		if exportErr != nil {
+			color.Yellow("  warning: export failed: %v", exportErr)
+		} else {
+			color.Cyan("\n  → Review & verify on TASS: %s\n", verifyURL)
+		}
+	}
+
 	return 1, nil
+}
+
+// exportResults POSTs novel capabilities to a hosted TASS server and returns
+// the verify URL from the response.
+func exportResults(novel []contracts.Capability, serverURL, token, repoName, branchName, repoRoot string) (string, error) {
+	// Auto-detect token from env if not provided via flag.
+	if token == "" {
+		token = os.Getenv("TASS_IMPORT_TOKEN")
+	}
+	if token == "" {
+		return "", fmt.Errorf("--token or TASS_IMPORT_TOKEN is required for --export-to")
+	}
+
+	// Auto-detect repo and branch from git if not provided.
+	if repoName == "" {
+		repoName = gitRemoteRepo(repoRoot)
+	}
+	if branchName == "" {
+		branchName = gitCurrentBranch(repoRoot)
+	}
+
+	type exportReq struct {
+		Repo         string                 `json:"repo"`
+		Branch       string                 `json:"branch"`
+		Capabilities []contracts.Capability `json:"capabilities"`
+	}
+	body, err := json.Marshal(exportReq{
+		Repo:         repoName,
+		Branch:       branchName,
+		Capabilities: novel,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, serverURL, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("POST %s: %w", serverURL, err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	var result struct {
+		VerifyURL string `json:"verify_url"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("parse response: %w", err)
+	}
+	return result.VerifyURL, nil
+}
+
+// gitCurrentBranch returns the current branch name from git, or "local" on failure.
+func gitCurrentBranch(repoRoot string) string {
+	out, err := runGit(repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "local"
+	}
+	return strings.TrimSpace(out)
+}
+
+// gitRemoteRepo tries to extract "owner/repo" from the origin remote URL.
+// Returns empty string on failure — the server will use a fallback.
+func gitRemoteRepo(repoRoot string) string {
+	out, err := runGit(repoRoot, "remote", "get-url", "origin")
+	if err != nil {
+		return ""
+	}
+	u := strings.TrimSpace(out)
+	// Handle SSH: git@github.com:owner/repo.git
+	if strings.HasPrefix(u, "git@") {
+		u = strings.TrimPrefix(u, "git@github.com:")
+	}
+	// Handle HTTPS: https://github.com/owner/repo.git
+	for _, prefix := range []string{"https://github.com/", "http://github.com/"} {
+		u = strings.TrimPrefix(u, prefix)
+	}
+	u = strings.TrimSuffix(u, ".git")
+	// Validate: must be "owner/repo"
+	if strings.Count(u, "/") == 1 && !strings.Contains(u, ":") {
+		return u
+	}
+	return ""
+}
+
+// runGit runs a git command in repoRoot and returns its stdout.
+func runGit(repoRoot string, gitArgs ...string) (string, error) {
+	args := append([]string{"-C", repoRoot}, gitArgs...)
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // isNoGitError heuristically detects "not a git repo" errors.

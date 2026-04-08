@@ -60,6 +60,7 @@ type Handlers struct {
 	APIStats      http.Handler // GET  /api/stats
 	APIAudit      http.Handler // GET  /api/audit + /api/audit/export
 	APIPolicy     http.Handler // GET  /api/policy
+	APIImport     http.Handler // POST /api/import (CLI export / air-gap mode)
 	Index         http.Handler // GET  /
 	VerifyPage    http.Handler // GET  /verify/
 	Dashboard     http.Handler // GET  /dashboard
@@ -120,6 +121,7 @@ func BuildMux(h Handlers) *http.ServeMux {
 	mux.Handle("/api/audit/export", h.APIAudit)
 	mux.Handle("/api/audit", h.APIAudit)
 	mux.Handle("/api/policy", h.APIPolicy)
+	mux.Handle("/api/import", h.APIImport)
 
 	// Web UI pages (authenticated)
 	mux.Handle("/verify/", h.VerifyPage)

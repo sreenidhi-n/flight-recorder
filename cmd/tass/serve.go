@@ -70,8 +70,8 @@ func runServe(args []string) error {
 	}
 	slog.Info("serve: github app loaded", "app_id", cfg.AppID)
 
-	// --- Scanner ---
-	astScanner, astErr := scanner.NewASTScannerFromDir("rules")
+	// --- Scanner (embedded rules — no rules/ dir needed on the server) ---
+	astScanner, astErr := buildASTScanner("./rules")
 	if astErr != nil {
 		slog.Warn("serve: AST scanner unavailable, Layer 1 disabled", "error", astErr)
 		astScanner = nil
@@ -106,10 +106,11 @@ func runServe(args []string) error {
 	verifier := gh.NewVerifier(app, store, baseURL)
 	verifyHandler := server.NewVerifyHandler(verifier)
 
-	// --- Stats + Audit + Policy handlers ---
+	// --- Stats + Audit + Policy + Import handlers ---
 	statsHandler := server.NewStatsHandler(store)
 	auditAPIHandler := server.NewAuditHandler(store)
 	policyAPIHandler := server.NewPolicyHandler(store)
+	importAPIHandler := server.NewImportHandler(store, baseURL)
 
 	// --- UI handlers ---
 	indexHandler := ui.NewIndexHandler(sessions)
@@ -128,6 +129,7 @@ func runServe(args []string) error {
 		APIStats:      statsHandler,
 		APIAudit:      auditAPIHandler,
 		APIPolicy:     policyAPIHandler,
+		APIImport:     importAPIHandler,
 		Index:         indexHandler,
 		VerifyPage:    verifyPageHandler,
 		Dashboard:     server.RequireAuthMiddleware(sessions, dashboardHandler),
