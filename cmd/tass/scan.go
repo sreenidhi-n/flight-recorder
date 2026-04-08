@@ -57,9 +57,9 @@ func runScan(args []string) (int, error) {
 		return 1, fmt.Errorf("tass scan: load manifest: %w", err)
 	}
 
-	// Build AST scanner from rules directory.
-	absRulesDir, _ := filepath.Abs(*rulesDir)
-	astScanner, err := scanner.NewASTScannerFromDir(absRulesDir)
+	// Build AST scanner — uses embedded rules unless --rules-dir is explicitly
+	// set to a real directory (e.g. during rule authoring).
+	astScanner, err := buildASTScanner(*rulesDir)
 	if err != nil {
 		color.Yellow("  warning: could not load AST rules (%v) — running Layer 0 only", err)
 		astScanner = nil

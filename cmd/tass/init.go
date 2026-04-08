@@ -33,9 +33,9 @@ func runInit(args []string) error {
 
 	fmt.Printf("Scanning %s for capabilities…\n", repoRoot)
 
-	// Build the AST scanner from the rules directory (optional).
-	absRulesDir, _ := filepath.Abs(*rulesDir)
-	astScanner, err := scanner.NewASTScannerFromDir(absRulesDir)
+	// Build AST scanner — uses embedded rules unless --rules-dir is explicitly
+	// set to a real directory (e.g. during rule authoring).
+	astScanner, err := buildASTScanner(*rulesDir)
 	if err != nil {
 		color.Yellow("  warning: could not load AST rules (%v) — running Layer 0 only", err)
 		astScanner = nil

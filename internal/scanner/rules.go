@@ -2,6 +2,8 @@ package scanner
 
 import (
 	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -143,4 +145,105 @@ func NewASTScannerFromDir(rulesDir string) (*ASTScanner, error) {
 		return nil, fmt.Errorf("scanner.NewASTScannerFromDir: %w", err)
 	}
 	return NewASTScanner(rules), nil
+}
+
+// NewASTScannerFromFS constructs an ASTScanner from an fs.FS (e.g. an embed.FS).
+// The FS must have language subdirectories ("go/", "python/", "javascript/")
+// at its root, each containing .scm + .meta.yaml rule pairs.
+func NewASTScannerFromFS(fsys fs.FS) (*ASTScanner, error) {
+	rules, err := loadRulesFromFS(fsys)
+	if err != nil {
+		return nil, fmt.Errorf("scanner.NewASTScannerFromFS: %w", err)
+	}
+	return NewASTScanner(rules), nil
+}
+
+// loadRulesFromFS is the fs.FS equivalent of LoadRules.
+func loadRulesFromFS(fsys fs.FS) (map[string][]*Rule, error) {
+	result := make(map[string][]*Rule)
+
+	entries, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		return nil, fmt.Errorf("loadRulesFromFS: read root: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		lang, ok := knownLanguages[entry.Name()]
+		if !ok {
+			continue
+		}
+		grammar := grammarForLang(lang)
+		if grammar == nil {
+			slog.Warn("rules: no grammar for language", "lang", lang)
+			continue
+		}
+
+		langFS, err := fs.Sub(fsys, entry.Name())
+		if err != nil {
+			return nil, fmt.Errorf("loadRulesFromFS: sub-FS %q: %w", entry.Name(), err)
+		}
+		rules, err := loadLangRulesFromFS(langFS, lang, grammar)
+		if err != nil {
+			return nil, fmt.Errorf("loadRulesFromFS: language %q: %w", lang, err)
+		}
+		if len(rules) > 0 {
+			result[lang] = append(result[lang], rules...)
+		}
+	}
+	return result, nil
+}
+
+// loadLangRulesFromFS is the fs.FS equivalent of loadLangRules.
+func loadLangRulesFromFS(langFS fs.FS, lang string, grammar *sitter.Language) ([]*Rule, error) {
+	entries, err := fs.ReadDir(langFS, ".")
+	if err != nil {
+		return nil, fmt.Errorf("read lang dir: %w", err)
+	}
+
+	var rules []*Rule
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".scm") {
+			continue
+		}
+		ruleName := strings.TrimSuffix(entry.Name(), ".scm")
+
+		queryBytes, err := readFSFile(langFS, entry.Name())
+		if err != nil {
+			return nil, fmt.Errorf("read query %q: %w", entry.Name(), err)
+		}
+		metaBytes, err := readFSFile(langFS, ruleName+".meta.yaml")
+		if err != nil {
+			slog.Warn("rules: missing .meta.yaml, skipping", "rule", entry.Name())
+			continue
+		}
+
+		var meta RuleMeta
+		if err := yaml.Unmarshal(metaBytes, &meta); err != nil {
+			return nil, fmt.Errorf("parse meta %q: %w", ruleName, err)
+		}
+		if meta.SymbolCapture == "" || meta.CapID == "" || meta.Confidence <= 0 {
+			slog.Error("rules: invalid meta, skipping", "rule", ruleName)
+			continue
+		}
+
+		query, err := sitter.NewQuery(queryBytes, grammar)
+		if err != nil {
+			return nil, fmt.Errorf("compile query %q: %w", ruleName, err)
+		}
+		rules = append(rules, &Rule{Query: query, Meta: meta, Language: lang, Name: ruleName})
+		slog.Debug("rules: loaded (embedded)", "lang", lang, "rule", ruleName)
+	}
+	return rules, nil
+}
+
+func readFSFile(fsys fs.FS, name string) ([]byte, error) {
+	f, err := fsys.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
 }
