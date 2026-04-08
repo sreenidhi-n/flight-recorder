@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/tass-security/tass/pkg/contracts"
@@ -45,9 +46,11 @@ type Rule struct {
 // ASTScanner runs tree-sitter queries against source file content and returns
 // detected capabilities. It is the Layer 1 detection engine.
 //
-// ASTScanner is not safe for concurrent use — tree-sitter's parser is stateful.
-// TODO(phase3): wrap in sync.Pool for the concurrent webhook handler.
+// The tree-sitter parser is stateful and cannot be used concurrently, so
+// ScanBytes serialises calls via a mutex. For high-throughput use a sync.Pool
+// of parsers instead, but the mutex is sufficient for the current workload.
 type ASTScanner struct {
+	mu     sync.Mutex
 	parser *sitter.Parser
 	// rules maps language name → list of compiled rules for that language.
 	rules map[string][]*Rule
@@ -79,6 +82,9 @@ func (s *ASTScanner) ScanBytes(content []byte, filename, lang string) ([]contrac
 	if grammar == nil {
 		return nil, fmt.Errorf("ast: no grammar registered for language %q", lang)
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	s.parser.SetLanguage(grammar)
 	tree, err := s.parser.ParseCtx(context.Background(), nil, content)
