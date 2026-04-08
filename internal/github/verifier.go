@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/tass-security/tass/internal/storage"
@@ -97,28 +98,9 @@ func (v *Verifier) Decide(
 	}
 	result.AllDecided = allDecided
 
-	if !allDecided {
-		log.Info("verifier: partial — waiting for more decisions",
-			"decided", len(decided), "total", len(scan.Capabilities))
-		return result, nil
-	}
-
-	// --- 5. All decided — figure out what's confirmed vs reverted ---
-	log.Info("verifier: all capabilities decided — finalizing")
-
-	var confirmedCaps []contracts.Capability
-	allConfirmed := true
-	for _, cap := range scan.Capabilities {
-		if decided[cap.ID] == contracts.DecisionConfirm {
-			confirmedCaps = append(confirmedCaps, cap)
-		} else {
-			allConfirmed = false
-		}
-	}
-	result.AllConfirmed = allConfirmed
-
-	// --- 6. Get installation token + repo info ---
-	// Errors here are non-fatal for the decision record — we log and skip GitHub steps.
+	// --- 5. Get installation token + repo info ---
+	// Fetched here (before the early-return) so partial decisions can also
+	// update the PR comment with live progress. Errors are non-fatal.
 	token, tokenErr := v.app.GetInstallationToken(ctx, scan.InstallationID)
 	repo, repoErr := v.store.GetRepository(ctx, scan.RepoID)
 
@@ -136,6 +118,40 @@ func (v *Verifier) Decide(
 			tokenErr = splitErr
 		}
 	}
+
+	if !allDecided {
+		log.Info("verifier: partial — waiting for more decisions",
+			"decided", len(decided), "total", len(scan.Capabilities))
+		// Update the PR comment with a live progress view so developers can
+		// see the running tally without leaving GitHub.
+		if tokenErr == nil && scan.CommentID != 0 {
+			progressBody := v.renderProgressComment(scanID, scan.Capabilities, decided, v.baseURL)
+			commentURL := fmt.Sprintf("%s/repos/%s/%s/issues/comments/%d",
+				v.app.base(), owner, repoName, scan.CommentID)
+			if _, pErr := v.app.apiPatch(ctx, token, commentURL,
+				map[string]any{"body": progressBody}); pErr != nil {
+				log.Error("verifier: update progress comment", "error", pErr)
+			} else {
+				log.Info("verifier: progress comment updated",
+					"decided", len(decided), "total", len(scan.Capabilities))
+			}
+		}
+		return result, nil
+	}
+
+	// --- All decided — figure out what's confirmed vs reverted ---
+	log.Info("verifier: all capabilities decided — finalizing")
+
+	var confirmedCaps []contracts.Capability
+	allConfirmed := true
+	for _, cap := range scan.Capabilities {
+		if decided[cap.ID] == contracts.DecisionConfirm {
+			confirmedCaps = append(confirmedCaps, cap)
+		} else {
+			allConfirmed = false
+		}
+	}
+	result.AllConfirmed = allConfirmed
 
 	// --- 7. Commit updated manifest (confirmed caps only) ---
 	if tokenErr == nil {
@@ -267,35 +283,119 @@ func (v *Verifier) commitManifest(
 	return content, nil
 }
 
-// renderVerifiedComment builds an updated PR comment summarising the outcome.
+// renderProgressComment builds a live-progress PR comment shown after each
+// individual decision while the scan is still partially reviewed.
+func (v *Verifier) renderProgressComment(
+	scanID string,
+	caps []contracts.Capability,
+	decided map[string]contracts.VerificationDecision,
+	baseURL string,
+) string {
+	total := len(caps)
+	confirmed, reverted, pending := 0, 0, 0
+	for _, cap := range caps {
+		switch decided[cap.ID] {
+		case contracts.DecisionConfirm:
+			confirmed++
+		case contracts.DecisionRevert:
+			reverted++
+		default:
+			pending++
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "## TASS — %d/%d Capabilities Reviewed\n\n", total-pending, total)
+
+	// Tally line
+	parts := []string{}
+	if confirmed > 0 {
+		parts = append(parts, fmt.Sprintf("✅ %d confirmed", confirmed))
+	}
+	if reverted > 0 {
+		parts = append(parts, fmt.Sprintf("↩️ %d reverted", reverted))
+	}
+	if pending > 0 {
+		parts = append(parts, fmt.Sprintf("⏳ %d pending", pending))
+	}
+	fmt.Fprintf(&b, "> %s\n\n", strings.Join(parts, " · "))
+
+	// Per-capability table
+	fmt.Fprintf(&b, "| # | Capability | Category | Status |\n")
+	fmt.Fprintf(&b, "|---|------------|----------|--------|\n")
+	for i, cap := range caps {
+		var statusBadge string
+		switch decided[cap.ID] {
+		case contracts.DecisionConfirm:
+			statusBadge = "✅ Confirmed"
+		case contracts.DecisionRevert:
+			statusBadge = "↩️ Revert"
+		default:
+			statusBadge = "⏳ Pending"
+		}
+		fmt.Fprintf(&b, "| %d | %s | %s %s | %s |\n",
+			i+1, cap.Name,
+			categoryEmoji(cap.Category), formatCategory(cap.Category),
+			statusBadge,
+		)
+	}
+
+	fmt.Fprintf(&b, "\n**[Continue reviewing on TASS](%s/verify/%s)**\n\n", baseURL, scanID)
+	fmt.Fprintf(&b, "%s%s -->\n", tassMarkerPrefix, scanID)
+	return b.String()
+}
+
+// renderVerifiedComment builds the final PR comment after all capabilities are decided.
 func (v *Verifier) renderVerifiedComment(
 	scanID string,
 	caps []contracts.Capability,
 	decided map[string]contracts.VerificationDecision,
 	allConfirmed bool,
 ) string {
-	var sb []byte
-	if allConfirmed {
-		sb = append(sb, "## TASS — All Capabilities Verified \n\n"...)
-		sb = append(sb, "Every capability detected in this PR has been confirmed. Manifest updated automatically.\n\n"...)
-	} else {
-		sb = append(sb, "## TASS — Review Complete (Action Required)\n\n"...)
-		sb = append(sb, "Some capabilities were marked for revert. Please update your code and push a new commit.\n\n"...)
-	}
+	var b strings.Builder
 
-	sb = append(sb, "| Capability | Decision | Decided By |\n"...)
-	sb = append(sb, "|-----------|----------|------------|\n"...)
+	confirmed, reverted := 0, 0
 	for _, cap := range caps {
-		dec := decided[cap.ID]
-		icon := "Confirmed"
-		if dec == contracts.DecisionRevert {
-			icon = "Reverted"
+		if decided[cap.ID] == contracts.DecisionConfirm {
+			confirmed++
+		} else {
+			reverted++
 		}
-		sb = append(sb, fmt.Sprintf("| %s | %s | via TASS |\n", cap.Name, icon)...)
 	}
 
-	sb = append(sb, fmt.Sprintf("\n<!-- tass-scan-id:%s -->\n", scanID)...)
-	return string(sb)
+	if allConfirmed {
+		fmt.Fprintf(&b, "## TASS — All Capabilities Verified ✅\n\n")
+		fmt.Fprintf(&b, "Every capability detected in this PR has been confirmed. Manifest updated automatically.\n\n")
+	} else {
+		fmt.Fprintf(&b, "## TASS — Review Complete (Action Required) ↩️\n\n")
+		fmt.Fprintf(&b, "Some capabilities were marked for revert. Please update your code and push a new commit.\n\n")
+	}
+
+	// Tally
+	parts := []string{fmt.Sprintf("✅ %d confirmed", confirmed)}
+	if reverted > 0 {
+		parts = append(parts, fmt.Sprintf("↩️ %d reverted", reverted))
+	}
+	fmt.Fprintf(&b, "> %s\n\n", strings.Join(parts, " · "))
+
+	// Per-row table with decision
+	fmt.Fprintf(&b, "| # | Capability | Category | Decision |\n")
+	fmt.Fprintf(&b, "|---|------------|----------|----------|\n")
+	for i, cap := range caps {
+		dec := decided[cap.ID]
+		badge := "✅ Confirmed"
+		if dec == contracts.DecisionRevert {
+			badge = "↩️ Reverted"
+		}
+		fmt.Fprintf(&b, "| %d | %s | %s %s | %s |\n",
+			i+1, cap.Name,
+			categoryEmoji(cap.Category), formatCategory(cap.Category),
+			badge,
+		)
+	}
+
+	fmt.Fprintf(&b, "\n%s%s -->\n", tassMarkerPrefix, scanID)
+	return b.String()
 }
 
 // --- helpers ---
