@@ -1,0 +1,7 @@
+category: external_api
+name: "AI provider SDK client"
+confidence: 0.95
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:ai:client:OpenAI  or  ast:python:ai:client:Anthropic
+cap_id: "ai:client"
+symbol_capture: "cls"

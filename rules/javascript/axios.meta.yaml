@@ -1,0 +1,7 @@
+category: network_access
+name: "HTTP client via axios"
+confidence: 0.95
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:javascript:axios:client:post  or  ast:javascript:axios:client:create
+cap_id: "axios:client"
+symbol_capture: "method"

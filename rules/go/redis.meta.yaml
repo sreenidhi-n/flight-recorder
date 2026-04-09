@@ -1,0 +1,7 @@
+category: database_operation
+name: "Redis connection via go-redis"
+confidence: 0.93
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:go:redis:client:NewClient  or  ast:go:redis:client:NewClusterClient
+cap_id: "redis:client"
+symbol_capture: "method"

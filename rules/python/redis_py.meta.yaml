@@ -1,0 +1,7 @@
+category: database_operation
+name: "Redis connection via redis-py"
+confidence: 0.93
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:redis:client:Redis  or  ast:python:redis:client:from_url
+cap_id: "redis:client"
+symbol_capture: "cls"

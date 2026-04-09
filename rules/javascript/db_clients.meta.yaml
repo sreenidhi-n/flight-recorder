@@ -1,0 +1,8 @@
+category: database_operation
+name: "Database client connection (pg/mysql2/mongodb/redis)"
+confidence: 0.87
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:javascript:db:client:MongoClient  or  ast:javascript:db:client:createConnection
+# Note: new Client() / new Pool() match broadly — confirmed by surrounding package imports.
+cap_id: "db:client"
+symbol_capture: "cls"

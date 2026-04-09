@@ -1,0 +1,7 @@
+category: network_access
+name: "gRPC client/server connection"
+confidence: 0.95
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:go:grpc:conn:Dial  or  ast:go:grpc:conn:NewServer
+cap_id: "grpc:conn"
+symbol_capture: "method"

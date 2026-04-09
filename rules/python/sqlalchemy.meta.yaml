@@ -1,0 +1,7 @@
+category: database_operation
+name: "SQLAlchemy database engine/session"
+confidence: 0.92
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:sqlalchemy:engine:create_engine
+cap_id: "sqlalchemy:engine"
+symbol_capture: "func"

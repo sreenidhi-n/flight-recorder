@@ -1,0 +1,8 @@
+category: database_operation
+name: "PostgreSQL connection via psycopg"
+confidence: 0.88
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:postgres:connect:connect
+# Note: bare connect() has slightly lower specificity — psycopg2.connect() is unambiguous.
+cap_id: "postgres:connect"
+symbol_capture: "method"

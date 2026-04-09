@@ -1,0 +1,7 @@
+category: privilege_pattern
+name: "Kubernetes cluster access via k8s Python client"
+confidence: 0.90
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:k8s:api:load_incluster_config  or  ast:python:k8s:api:CoreV1Api
+cap_id: "k8s:api"
+symbol_capture: "method"

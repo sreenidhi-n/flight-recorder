@@ -1,0 +1,7 @@
+category: privilege_pattern
+name: "Custom TLS configuration via crypto/tls"
+confidence: 0.88
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:go:tls:config:X509KeyPair  or  ast:go:tls:config:Dial
+cap_id: "tls:config"
+symbol_capture: "method"

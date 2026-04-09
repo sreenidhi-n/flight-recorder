@@ -1,0 +1,7 @@
+category: network_access
+name: "SSH connection via paramiko"
+confidence: 0.97
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:ssh:paramiko:SSHClient
+cap_id: "ssh:paramiko"
+symbol_capture: "cls"

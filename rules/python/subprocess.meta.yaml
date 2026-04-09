@@ -1,0 +1,7 @@
+category: privilege_pattern
+name: "Shell/subprocess execution"
+confidence: 0.95
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:subprocess:exec:run  or  ast:python:subprocess:exec:Popen
+cap_id: "subprocess:exec"
+symbol_capture: "method"

@@ -1,0 +1,8 @@
+category: privilege_pattern
+name: "Shell/subprocess execution via child_process"
+confidence: 0.88
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:javascript:subprocess:exec:exec  or  ast:javascript:subprocess:exec:spawn
+# Note: direct calls (exec/spawn) have slightly lower specificity than qualified ones.
+cap_id: "subprocess:exec"
+symbol_capture: "method"

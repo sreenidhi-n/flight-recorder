@@ -1,0 +1,7 @@
+category: network_access
+name: "HTTP client via httpx"
+confidence: 0.95
+# cap_id is a prefix. Final ID = ast:{lang}:{cap_id}:{matched_identifier}
+# Example: ast:python:httpx:client:post  or  ast:python:httpx:client:AsyncClient
+cap_id: "httpx:client"
+symbol_capture: "method"

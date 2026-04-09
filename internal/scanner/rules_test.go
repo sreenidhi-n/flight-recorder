@@ -417,8 +417,8 @@ function greet(name) { return "Hello, " + name; }
 	}
 }
 
-// TestRules_Python_Boto3 verifies boto3.client() and boto3.resource() are detected.
-// Snippet mirrors the direct boto3 usage pattern from requirements.txt consumers.
+// TestRules_Python_Boto3 verifies boto3.client("svc") and boto3.resource("svc") capture
+// the AWS service name as the symbol (e.g. "s3", "dynamodb"), not the method name.
 func TestRules_Python_Boto3(t *testing.T) {
 	src := []byte(`import boto3
 
@@ -435,14 +435,14 @@ def upload_file(bucket, key, body):
 	}
 
 	ids := capIDs(caps)
-	if !ids["ast:python:boto3:client:client"] {
-		t.Errorf("missing ast:python:boto3:client:client; got: %v", keys(ids))
+	if !ids["ast:python:boto3:client:s3"] {
+		t.Errorf("missing ast:python:boto3:client:s3; got: %v", keys(ids))
 	}
-	if !ids["ast:python:boto3:client:resource"] {
-		t.Errorf("missing ast:python:boto3:client:resource; got: %v", keys(ids))
+	if !ids["ast:python:boto3:client:dynamodb"] {
+		t.Errorf("missing ast:python:boto3:client:dynamodb; got: %v", keys(ids))
 	}
 	for _, c := range caps {
-		if c.ID == "ast:python:boto3:client:client" || c.ID == "ast:python:boto3:client:resource" {
+		if c.ID == "ast:python:boto3:client:s3" || c.ID == "ast:python:boto3:client:dynamodb" {
 			if c.Category != contracts.CatNetworkAccess {
 				t.Errorf("%s: Category=%q, want network_access", c.ID, c.Category)
 			}
