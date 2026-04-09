@@ -8,12 +8,13 @@ import (
 
 // DashboardData bundles everything needed for the org-level dashboard.
 type DashboardData struct {
-	Login         string
-	Avatar        string
-	OrgName       string
-	Stats         *storage.InstallationStats
-	RepoStatsList []RepoStatRow
-	RecentScans   []storage.RecentScan
+	Login          string
+	Avatar         string
+	OrgName        string
+	Stats          *storage.InstallationStats
+	RepoStatsList  []RepoStatRow
+	RecentScans    []storage.RecentScan
+	AppInstallURL  string // https://github.com/apps/{slug}/installations/new — empty if slug unset
 }
 
 type RepoStatRow struct {
@@ -28,9 +29,19 @@ type RepoStatRow struct {
 // Dashboard renders the org-level analytics page.
 templ Dashboard(d DashboardData) {
 	@Page("Dashboard", d.Login, d.Avatar) {
-		<div class="page-header">
-			<h2>Dashboard</h2>
-			<p>{ d.OrgName } · capability tracking overview</p>
+		<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+			<div>
+				<h2>Dashboard</h2>
+				<p>{ d.OrgName } · capability tracking overview</p>
+			</div>
+			if d.AppInstallURL != "" {
+				<a href={ templ.SafeURL(d.AppInstallURL) }
+					target="_blank" rel="noopener"
+					class="btn btn-primary"
+					style="font-size:13px;padding:6px 16px;white-space:nowrap">
+					+ Add repos
+				</a>
+			}
 		</div>
 
 		if d.Stats != nil {
@@ -55,7 +66,15 @@ templ Dashboard(d DashboardData) {
 				</div>
 			</div>
 		} else {
-			<p style="color:var(--fg2);margin-bottom:32px">No scan data yet. Install the GitHub App and open a pull request to get started.</p>
+			<p style="color:var(--fg2);margin-bottom:16px">No scan data yet. Install the GitHub App on a repository and open a pull request to get started.</p>
+			if d.AppInstallURL != "" {
+				<a href={ templ.SafeURL(d.AppInstallURL) }
+					target="_blank" rel="noopener"
+					class="btn btn-primary"
+					style="font-size:13px;padding:6px 16px;margin-bottom:32px;display:inline-block">
+					Install GitHub App →
+				</a>
+			}
 		}
 
 		if len(d.RecentScans) > 0 {

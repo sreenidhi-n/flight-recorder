@@ -152,10 +152,16 @@ func (h *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var installURL string
+	if h.app != nil && h.app.AppSlug != "" {
+		installURL = "https://github.com/apps/" + h.app.AppSlug + "/installations/new"
+	}
+
 	data := templates.DashboardData{
-		Login:   sess.GitHubLogin,
-		Avatar:  sess.AvatarURL,
-		OrgName: sess.GitHubLogin,
+		Login:         sess.GitHubLogin,
+		Avatar:        sess.AvatarURL,
+		OrgName:       sess.GitHubLogin,
+		AppInstallURL: installURL,
 	}
 
 	if instID > 0 {

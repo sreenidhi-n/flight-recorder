@@ -27,6 +27,7 @@ type App struct {
 	ClientID      string
 	ClientSecret  string
 	WebhookSecret string
+	AppSlug       string // e.g. "tass-security" — used to build github.com/apps/{slug} URLs
 	apiBase       string // override for tests; empty → uses defaultAPIBase
 	privateKey    *rsa.PrivateKey
 
@@ -54,6 +55,7 @@ type Config struct {
 	ClientSecret   string
 	WebhookSecret  string
 	PrivateKeyPath string
+	AppSlug        string // TASS_GITHUB_APP_NAME — used to build installation URLs
 	APIBaseURL     string // optional: override API base for testing
 }
 
@@ -95,6 +97,7 @@ func NewApp(cfg Config) (*App, error) {
 		ClientID:      cfg.ClientID,
 		ClientSecret:  cfg.ClientSecret,
 		WebhookSecret: cfg.WebhookSecret,
+		AppSlug:       cfg.AppSlug,
 		apiBase:       cfg.APIBaseURL,
 		privateKey:    privateKey,
 		tokens:        make(map[int64]*cachedToken),
@@ -142,6 +145,7 @@ func ConfigFromEnv() (Config, error) {
 		ClientSecret:   os.Getenv("TASS_GITHUB_CLIENT_SECRET"),
 		WebhookSecret:  os.Getenv("TASS_GITHUB_WEBHOOK_SECRET"),
 		PrivateKeyPath: os.Getenv("TASS_GITHUB_PRIVATE_KEY_PATH"),
+		AppSlug:        os.Getenv("TASS_GITHUB_APP_NAME"), // optional; enables install links in UI
 	}, nil
 }
 
