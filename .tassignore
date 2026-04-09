@@ -1,0 +1,15 @@
+# TASS ignore file — excluded from capability scanning
+# Same syntax as .gitignore
+
+# Vendored third-party code (not our capabilities)
+scenarios/filtering/vendor/
+
+# Auto-generated protobuf stubs
+*.pb.go
+**/*_pb2.py
+
+# Test fixtures — not production behaviour
+*_test.go
+**/*.spec.js
+**/*.spec.py
+scenarios/filtering/src/test_*.py
