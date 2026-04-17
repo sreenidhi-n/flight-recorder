@@ -277,15 +277,18 @@ func (h *SetupHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // UIVerifyHandler handles POST /ui/verify — the HTMX verify endpoint.
 // Accepts form data (not JSON) and returns HTML (CapabilityCardFragment).
+// Requires Approver (GitHub write) role on the repository (SOC2 CC6.1/CC6.3).
 type UIVerifyHandler struct {
-	verifier *gh.Verifier
-	store    storage.Store
-	sessions *auth.SessionStore
-	baseURL  string
+	verifier  *gh.Verifier
+	store     storage.Store
+	sessions  *auth.SessionStore
+	baseURL   string
+	rbacCache *auth.PermCache
+	fetchPerm auth.PermFetcher
 }
 
-func NewUIVerifyHandler(verifier *gh.Verifier, store storage.Store, sessions *auth.SessionStore, baseURL string) *UIVerifyHandler {
-	return &UIVerifyHandler{verifier: verifier, store: store, sessions: sessions, baseURL: baseURL}
+func NewUIVerifyHandler(verifier *gh.Verifier, store storage.Store, sessions *auth.SessionStore, baseURL string, rbacCache *auth.PermCache, fetchPerm auth.PermFetcher) *UIVerifyHandler {
+	return &UIVerifyHandler{verifier: verifier, store: store, sessions: sessions, baseURL: baseURL, rbacCache: rbacCache, fetchPerm: fetchPerm}
 }
 
 func (h *UIVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -312,9 +315,24 @@ func (h *UIVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sess := auth.SessionFromStore(h.sessions, r)
 	decidedBy := "anonymous"
-	if sess := auth.SessionFromStore(h.sessions, r); sess != nil {
+	if sess != nil {
 		decidedBy = sess.GitHubLogin
+	}
+
+	// RBAC: require Approver (write) when cache and fetcher are configured.
+	if h.rbacCache != nil && h.fetchPerm != nil && sess != nil {
+		scan, err := h.store.GetScan(r.Context(), scanID)
+		if err == nil && scan != nil && scan.FullName != "" {
+			parts := strings.SplitN(scan.FullName, "/", 2)
+			if len(parts) == 2 {
+				if _, ok := auth.EnforceInHandler(w, r, sess.GitHubLogin, sess.AccessToken,
+					parts[0], parts[1], auth.RoleApprover, h.rbacCache, h.fetchPerm); !ok {
+					return
+				}
+			}
+		}
 	}
 
 	decision := contracts.DecisionConfirm

@@ -19,6 +19,7 @@ import (
 	"github.com/tass-security/tass/internal/ui"
 )
 
+
 func runServe(args []string) error {
 	addr := ":8080"
 	dbPath := "tass.db"
@@ -89,21 +90,31 @@ func runServe(args []string) error {
 		sessionSecret = "tass-dev-session-secret-change-me"
 	}
 
-	// --- Auth ---
+	// --- Auth + RBAC ---
 	sessions := auth.NewSessionStore(sessionSecret)
 	oauthHandler := auth.NewOAuthHandler(auth.OAuthConfig{
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
 		BaseURL:      baseURL,
 	}, sessions)
+	rbacCache := auth.NewPermCache(5 * time.Minute)
+	fetchPerm := auth.PermFetcher(func(ctx context.Context, token, owner, repo, login string) (string, error) {
+		return app.GetCollaboratorPermission(ctx, token, owner, repo, login)
+	})
 
 	// --- Pipeline + Webhook handler ---
 	pipeline := gh.NewPipeline(app, sc, store, baseURL)
 	firstRun := gh.NewFirstRunPipeline(app, sc, store)
-	webhookHandler := gh.NewHandler(app, store, pipeline.ScanFunc()).WithFirstRun(firstRun)
 
 	// --- Verification decision engine ---
 	verifier := gh.NewVerifier(app, store, baseURL)
+
+	// Slash command handler (RBAC-gated, wired into webhook).
+	slashHandler := gh.NewSlashCommandHandler(app, store, verifier, rbacCache)
+	webhookHandler := gh.NewHandler(app, store, pipeline.ScanFunc()).
+		WithFirstRun(firstRun).
+		WithSlashCommands(slashHandler)
+
 	verifyHandler := server.NewVerifyHandler(verifier)
 
 	// --- Stats + Audit + Policy + Import handlers ---
@@ -115,7 +126,7 @@ func runServe(args []string) error {
 	// --- UI handlers ---
 	indexHandler := ui.NewIndexHandler(sessions)
 	verifyPageHandler := ui.NewVerifyPageHandler(store, sessions, baseURL)
-	uiVerifyHandler := ui.NewUIVerifyHandler(verifier, store, sessions, baseURL)
+	uiVerifyHandler := ui.NewUIVerifyHandler(verifier, store, sessions, baseURL, rbacCache, fetchPerm)
 	dashboardHandler := ui.NewDashboardHandler(store, sessions, app)
 	repoDashboardHandler := ui.NewRepoDashboardHandler(store, sessions)
 	auditPageHandler := ui.NewAuditPageHandler(store, sessions)

@@ -29,10 +29,11 @@ type ScanFunc func(ctx context.Context, req ScanRequest)
 
 // Handler handles incoming GitHub webhooks.
 type Handler struct {
-	app      *App
-	store    storage.Store
-	onScan   ScanFunc
-	firstRun *FirstRunPipeline // nil if not configured
+	app          *App
+	store        storage.Store
+	onScan       ScanFunc
+	firstRun     *FirstRunPipeline    // nil if not configured
+	slashHandler *SlashCommandHandler // nil if not configured
 }
 
 // NewHandler constructs a webhook handler.
@@ -46,6 +47,12 @@ func NewHandler(app *App, store storage.Store, onScan ScanFunc) *Handler {
 // WithFirstRun attaches a FirstRunPipeline to the handler.
 func (h *Handler) WithFirstRun(fr *FirstRunPipeline) *Handler {
 	h.firstRun = fr
+	return h
+}
+
+// WithSlashCommands attaches a SlashCommandHandler to the webhook handler.
+func (h *Handler) WithSlashCommands(sc *SlashCommandHandler) *Handler {
+	h.slashHandler = sc
 	return h
 }
 
@@ -84,6 +91,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.handlePullRequest(ctx, body, deliveryID)
 		case "installation":
 			h.handleInstallation(ctx, body, deliveryID)
+		case "issue_comment":
+			h.handleIssueComment(ctx, body, deliveryID)
 		default:
 			slog.Debug("webhook: ignoring unhandled event type", "event", eventType)
 		}
@@ -176,6 +185,18 @@ func (h *Handler) handleInstallation(ctx context.Context, body []byte, deliveryI
 	default:
 		slog.Debug("webhook: ignoring installation action", "action", event.Action)
 	}
+}
+
+func (h *Handler) handleIssueComment(ctx context.Context, body []byte, deliveryID string) {
+	if h.slashHandler == nil {
+		return
+	}
+	var event IssueCommentEvent
+	if err := json.Unmarshal(body, &event); err != nil {
+		slog.Error("webhook: parse issue_comment event", "error", err, "delivery", deliveryID)
+		return
+	}
+	h.slashHandler.Handle(ctx, event)
 }
 
 // WebhookURL returns a formatted string describing where to point GitHub.

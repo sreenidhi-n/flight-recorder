@@ -16,17 +16,14 @@ import (
 // Tests build it once via TestMain or rely on it being pre-built.
 func binaryPath(t *testing.T) string {
 	t.Helper()
-	// Walk up from e2e/ to find the repo root, then look for the binary.
-	// The binary is built in the repo root by `go build ./cmd/tass`.
 	root := repoRoot(t)
 	bin := filepath.Join(root, "tass")
-	if _, err := os.Stat(bin); os.IsNotExist(err) {
-		// Build it if missing.
-		cmd := exec.Command("go", "build", "-o", bin, "./cmd/tass")
-		cmd.Dir = root
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("failed to build tass binary: %v\n%s", err, out)
-		}
+	// Always rebuild so the binary matches the current source.
+	ldflags := `-X main.version=v3.0.0-dev -X main.commit=none -X main.buildDate=unknown`
+	cmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", bin, "./cmd/tass")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build tass binary: %v\n%s", err, out)
 	}
 	return bin
 }
@@ -49,8 +46,8 @@ func TestVersionFlag(t *testing.T) {
 		t.Fatalf("tass --version: %v", err)
 	}
 	got := strings.TrimSpace(string(out))
-	if got != "tass v3.0.0-dev" {
-		t.Errorf("--version: got %q, want %q", got, "tass v3.0.0-dev")
+	if !strings.HasPrefix(got, "tass v3.0.0-dev") {
+		t.Errorf("--version: got %q, want prefix %q", got, "tass v3.0.0-dev")
 	}
 }
 

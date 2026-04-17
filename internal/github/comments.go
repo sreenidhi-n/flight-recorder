@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/tass-security/tass/pkg/contracts"
@@ -171,4 +172,37 @@ func formatLayer(layer contracts.DetectionLayer) string {
 	default:
 		return string(layer)
 	}
+}
+
+// PostComment posts a plain (non-TASS-marker) comment on a PR or issue.
+// Used by slash command responses and permission denial notices.
+func PostComment(ctx context.Context, token, owner, repo string, issueNum int, body, apiBase string) error {
+	if apiBase == "" {
+		apiBase = "https://api.github.com"
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", apiBase, owner, repo, issueNum)
+
+	payload, err := json.Marshal(map[string]string{"body": body})
+	if err != nil {
+		return fmt.Errorf("marshal comment: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(payload)))
+	if err != nil {
+		return fmt.Errorf("build post-comment request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("post comment: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("post comment: status %d", resp.StatusCode)
+	}
+	return nil
 }

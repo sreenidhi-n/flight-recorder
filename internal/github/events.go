@@ -69,3 +69,29 @@ type Account struct {
 type InstallationRef struct {
 	ID int64 `json:"id"`
 }
+
+// IssueCommentEvent is sent when a comment is created, edited, or deleted on
+// an issue or pull request. TASS uses this for slash command processing.
+type IssueCommentEvent struct {
+	Action       string          `json:"action"` // "created", "edited", "deleted"
+	Issue        IssueRef        `json:"issue"`
+	Comment      IssueComment    `json:"comment"`
+	Repository   Repository      `json:"repository"`
+	Installation *InstallationRef `json:"installation"`
+}
+
+type IssueRef struct {
+	Number      int    `json:"number"`
+	PullRequest *struct{} `json:"pull_request"` // non-nil if the issue IS a PR
+}
+
+type IssueComment struct {
+	ID   int64       `json:"id"`
+	Body string      `json:"body"`
+	User CommentUser `json:"user"`
+}
+
+type CommentUser struct {
+	Login string `json:"login"`
+	ID    int64  `json:"id"`
+}

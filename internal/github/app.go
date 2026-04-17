@@ -230,6 +230,47 @@ func (a *App) fetchInstallationToken(ctx context.Context, installationID int64) 
 	return result.Token, result.ExpiresAt, nil
 }
 
+// GetCollaboratorPermission returns the GitHub permission level for a user on a repo.
+// Uses the user's OAuth access token (not an installation token) so the result
+// reflects the actual collaborator role. Possible return values:
+//
+//	"admin", "maintain", "write", "triage", "read"
+//
+// Returns an empty string + error when the user is not a collaborator at all.
+func (a *App) GetCollaboratorPermission(ctx context.Context, userAccessToken, owner, repo, username string) (string, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/collaborators/%s/permission",
+		a.base(), owner, repo, username)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("github: build permission request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+userAccessToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("github: get permission: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("github: %s is not a collaborator on %s/%s", username, owner, repo)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("github: permission response %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Permission string `json:"permission"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("github: parse permission response: %w", err)
+	}
+	return result.Permission, nil
+}
+
 // GetRepo fetches basic repository info — used to verify token works.
 func (a *App) GetRepo(ctx context.Context, installationID int64, owner, repo string) (map[string]any, error) {
 	token, err := a.GetInstallationToken(ctx, installationID)
