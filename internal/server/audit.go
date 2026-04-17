@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/tass-security/tass/internal/audit"
 	"github.com/tass-security/tass/internal/storage"
 )
 
@@ -137,4 +138,117 @@ func (h *AuditHandler) handleExport(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	cw.Flush()
+}
+
+// --- Hash chain verify endpoint: GET /api/audit/chain/verify?tenant_id=N ---
+// Admin-only. Verifies the integrity of the audit chain for a tenant.
+// Returns: {"ok":true,"checked_count":N,"chain_head_hash":"..."}
+// or       {"ok":false,"broken_at_id":"...","checked_count":N}
+
+// ChainVerifyHandler handles GET /api/audit/chain/verify.
+type ChainVerifyHandler struct {
+	store storage.Store
+}
+
+func NewChainVerifyHandler(store storage.Store) *ChainVerifyHandler {
+	return &ChainVerifyHandler{store: store}
+}
+
+func (h *ChainVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	tenantID, err := strconv.ParseInt(r.URL.Query().Get("tenant_id"), 10, 64)
+	if err != nil || tenantID == 0 {
+		http.Error(w, "tenant_id required", http.StatusBadRequest)
+		return
+	}
+
+	chainRows, err := h.store.GetAuditChainRows(r.Context(), tenantID)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert storage rows to audit chain rows.
+	rows := make([]audit.ChainRow, len(chainRows))
+	for i, r := range chainRows {
+		rows[i] = audit.ChainRow{
+			ID: r.ID, Ts: r.Ts, TenantID: r.TenantID,
+			ActorGHID: r.ActorGHID, ActorLogin: r.ActorLogin,
+			Repo: r.Repo, Action: r.Action, TargetID: r.TargetID,
+			BeforeJSON: r.BeforeJSON, AfterJSON: r.AfterJSON,
+			IP: r.IP, UserAgent: r.UserAgent,
+			PrevHash: r.PrevHash, Hash: r.Hash,
+		}
+	}
+
+	result := audit.VerifyChain(rows)
+
+	type resp struct {
+		OK            bool   `json:"ok"`
+		BrokenAtID    string `json:"broken_at_id,omitempty"`
+		CheckedCount  int    `json:"checked_count"`
+		ChainHeadHash string `json:"chain_head_hash,omitempty"`
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp{
+		OK:            result.OK,
+		BrokenAtID:    result.BrokenAtID,
+		CheckedCount:  result.CheckedCount,
+		ChainHeadHash: result.ChainHeadHash,
+	})
+}
+
+// --- NDJSON streaming export: GET /api/audit/events.ndjson?tenant_id=N&repo=owner/repo ---
+// Admin-only. Streams audit events as newline-delimited JSON.
+
+// AuditNDJSONHandler handles GET /api/audit/events.ndjson.
+type AuditNDJSONHandler struct {
+	store storage.Store
+}
+
+func NewAuditNDJSONHandler(store storage.Store) *AuditNDJSONHandler {
+	return &AuditNDJSONHandler{store: store}
+}
+
+func (h *AuditNDJSONHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	tenantID, err := strconv.ParseInt(r.URL.Query().Get("tenant_id"), 10, 64)
+	if err != nil || tenantID == 0 {
+		http.Error(w, "tenant_id required", http.StatusBadRequest)
+		return
+	}
+	repo := r.URL.Query().Get("repo") // optional filter
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tass-audit-%d.ndjson"`, tenantID))
+
+	const pageSize = 500
+	encoder := json.NewEncoder(w)
+	offset := 0
+	for {
+		events, err := h.store.GetAuditEvents(r.Context(), tenantID, repo, pageSize, offset)
+		if err != nil {
+			// Can't write HTTP error after headers are sent; just stop.
+			return
+		}
+		for _, evt := range events {
+			_ = encoder.Encode(evt)
+		}
+		if len(events) < pageSize {
+			break
+		}
+		offset += pageSize
+	}
+	// Flush if the ResponseWriter supports it.
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 }

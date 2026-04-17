@@ -58,8 +58,10 @@ type Handlers struct {
 	APIVerify     http.Handler // POST /api/verify  (JSON — programmatic)
 	UIVerify      http.Handler // POST /ui/verify   (form + HTML — HTMX)
 	APIStats      http.Handler // GET  /api/stats
-	APIAudit      http.Handler // GET  /api/audit + /api/audit/export
-	APIPolicy     http.Handler // GET  /api/policy
+	APIAudit       http.Handler // GET  /api/audit + /api/audit/export
+	APIAuditVerify http.Handler // GET  /api/audit/chain/verify (Admin)
+	APIAuditNDJSON http.Handler // GET  /api/audit/events.ndjson (Admin)
+	APIPolicy      http.Handler // GET  /api/policy
 	APIImport     http.Handler // POST /api/import (CLI export / air-gap mode)
 	Index         http.Handler // GET  /
 	VerifyPage    http.Handler // GET  /verify/
@@ -118,6 +120,8 @@ func BuildMux(h Handlers) *http.ServeMux {
 	mux.Handle("/api/verify", RateLimitMiddleware(60, time.Minute, h.APIVerify)) // JSON API
 	mux.Handle("/ui/verify", RateLimitMiddleware(60, time.Minute, h.UIVerify))   // HTMX form+HTML
 	mux.Handle("/api/stats", h.APIStats)
+	mux.Handle("/api/audit/chain/verify", h.APIAuditVerify)
+	mux.Handle("/api/audit/events.ndjson", h.APIAuditNDJSON)
 	mux.Handle("/api/audit/export", h.APIAudit)
 	mux.Handle("/api/audit", h.APIAudit)
 	mux.Handle("/api/policy", h.APIPolicy)

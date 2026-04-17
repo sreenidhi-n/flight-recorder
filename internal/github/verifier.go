@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tass-security/tass/internal/audit"
 	"github.com/tass-security/tass/internal/storage"
 	"github.com/tass-security/tass/pkg/contracts"
 	"github.com/tass-security/tass/pkg/manifest"
@@ -19,11 +20,37 @@ type Verifier struct {
 	app     *App
 	store   storage.Store
 	baseURL string
+	emitter *audit.Emitter // may be nil (no-op) when audit log is not configured
 }
 
 // NewVerifier constructs a Verifier.
 func NewVerifier(app *App, store storage.Store, baseURL string) *Verifier {
-	return &Verifier{app: app, store: store, baseURL: baseURL}
+	return &Verifier{
+		app:     app,
+		store:   store,
+		baseURL: baseURL,
+		emitter: audit.NewEmitter(&storageAuditAdapter{store}),
+	}
+}
+
+// storageAuditAdapter bridges storage.Store to audit.Storer by converting event types.
+type storageAuditAdapter struct{ store storage.Store }
+
+func (a *storageAuditAdapter) SaveAuditEvent(ctx context.Context, evt audit.AuditEvent) error {
+	return a.store.SaveAuditEvent(ctx, storage.AuditEvent{
+		ID:         evt.ID,
+		Ts:         evt.Ts,
+		TenantID:   evt.TenantID,
+		ActorGHID:  evt.ActorGHID,
+		ActorLogin: evt.ActorLogin,
+		Repo:       evt.Repo,
+		Action:     string(evt.Action),
+		TargetID:   evt.TargetID,
+		BeforeJSON: evt.BeforeJSON,
+		AfterJSON:  evt.AfterJSON,
+		IP:         evt.IP,
+		UserAgent:  evt.UserAgent,
+	})
 }
 
 // VerifyResult is returned after processing a decision.
@@ -80,6 +107,22 @@ func (v *Verifier) Decide(
 		return nil, fmt.Errorf("verifier: save decision: %w", err)
 	}
 	log.Info("verifier: decision saved")
+
+	// Emit audit event (non-fatal if it fails — we still process the decision).
+	auditAction := audit.ActionCapabilityConfirmed
+	if decision == contracts.DecisionRevert {
+		auditAction = audit.ActionCapabilityReverted
+	}
+	// Enrich the actor context with tenant + repo info for the audit record.
+	auditCtx := audit.WithActor(ctx, audit.ActorInfo{
+		TenantID:   scan.InstallationID,
+		ActorLogin: decidedBy,
+		Repo:       scan.FullName,
+	})
+	_ = v.emitter.Emit(auditCtx, auditAction, capabilityID,
+		map[string]string{"scan_id": scanID, "decision": "previous"},
+		map[string]string{"scan_id": scanID, "decision": string(decision), "justification": justification, "decided_by": decidedBy},
+	)
 
 	// --- 4. Check if all capabilities are now decided ---
 	allDecisions, err := v.store.GetDecisionsByScan(ctx, scanID)
