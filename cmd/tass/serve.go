@@ -48,6 +48,8 @@ func runServe(args []string) error {
 			fmt.Fprintf(os.Stderr, "  TASS_GITHUB_PRIVATE_KEY_PATH\n")
 			fmt.Fprintf(os.Stderr, "  TASS_SESSION_SECRET      (32+ random bytes as hex or any string)\n")
 			fmt.Fprintf(os.Stderr, "  TASS_BASE_URL            (e.g. https://app.tass.dev)\n")
+			fmt.Fprintf(os.Stderr, "  TASS_GITHUB_APP_NAME     (optional GitHub App slug — enables \"+ Add repos\" on dashboard)\n")
+			fmt.Fprintf(os.Stderr, "  TASS_IMPORT_TOKEN        (optional — enables POST /api/import for CLI hybrid export)\n")
 			return nil
 		}
 	}
@@ -120,16 +122,18 @@ func runServe(args []string) error {
 	// --- Stats + Audit + Policy + Import handlers ---
 	statsHandler := server.NewStatsHandler(store)
 	auditAPIHandler := server.NewAuditHandler(store)
+	auditVerifyHandler := server.NewChainVerifyHandler(store)
+	auditNDJSONHandler := server.NewAuditNDJSONHandler(store)
 	policyAPIHandler := server.NewPolicyHandler(store)
 	importAPIHandler := server.NewImportHandler(store, baseURL)
 
 	// --- UI handlers ---
 	indexHandler := ui.NewIndexHandler(sessions)
-	verifyPageHandler := ui.NewVerifyPageHandler(store, sessions, baseURL)
+	verifyPageHandler := ui.NewVerifyPageHandler(store, sessions, baseURL, rbacCache, fetchPerm)
 	uiVerifyHandler := ui.NewUIVerifyHandler(verifier, store, sessions, baseURL, rbacCache, fetchPerm)
-	dashboardHandler := ui.NewDashboardHandler(store, sessions, app)
-	repoDashboardHandler := ui.NewRepoDashboardHandler(store, sessions)
-	auditPageHandler := ui.NewAuditPageHandler(store, sessions)
+	dashboardHandler := ui.NewDashboardHandler(store, sessions, app, rbacCache, fetchPerm)
+	repoDashboardHandler := ui.NewRepoDashboardHandler(store, sessions, rbacCache, fetchPerm)
+	auditPageHandler := ui.NewAuditPageHandler(store, sessions, rbacCache, fetchPerm)
 	setupHandler := ui.NewSetupHandler(store, sessions)
 
 	// --- HTTP server ---
@@ -138,7 +142,9 @@ func runServe(args []string) error {
 		APIVerify:     verifyHandler,
 		UIVerify:      uiVerifyHandler,
 		APIStats:      statsHandler,
-		APIAudit:      auditAPIHandler,
+		APIAudit:       auditAPIHandler,
+		APIAuditVerify: auditVerifyHandler,
+		APIAuditNDJSON: auditNDJSONHandler,
 		APIPolicy:     policyAPIHandler,
 		APIImport:     importAPIHandler,
 		Index:         indexHandler,

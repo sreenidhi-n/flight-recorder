@@ -168,6 +168,39 @@ func TestGetRepositoryByFullName(t *testing.T) {
 	}
 }
 
+func TestListRepositoriesByInstallation(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	_ = s.UpsertInstallation(ctx, storage.Installation{
+		ID: 7, AccountLogin: "acme", AccountType: "Organization",
+		InstalledAt: time.Now().UTC(),
+	})
+	_ = s.UpsertRepository(ctx, storage.Repository{
+		ID: 301, InstallationID: 7, FullName: "acme/b",
+		DefaultBranch: "main", CreatedAt: time.Now().UTC(),
+	})
+	_ = s.UpsertRepository(ctx, storage.Repository{
+		ID: 302, InstallationID: 7, FullName: "acme/a",
+		DefaultBranch: "main", CreatedAt: time.Now().UTC(),
+	})
+	_ = s.UpsertRepository(ctx, storage.Repository{
+		ID: 303, InstallationID: 99, FullName: "other/x",
+		DefaultBranch: "main", CreatedAt: time.Now().UTC(),
+	})
+
+	list, err := s.ListRepositoriesByInstallation(ctx, 7)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("want 2 repos for installation 7, got %d", len(list))
+	}
+	if list[0].FullName != "acme/a" || list[1].FullName != "acme/b" {
+		t.Errorf("want sorted by full_name, got %v, %v", list[0].FullName, list[1].FullName)
+	}
+}
+
 func setupRepoAndInstallation(t *testing.T, s *storage.SQLiteStore) (installationID, repoID int64) {
 	t.Helper()
 	ctx := context.Background()

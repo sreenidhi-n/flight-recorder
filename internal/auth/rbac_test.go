@@ -110,6 +110,44 @@ func TestPermCache_TenantIsolation(t *testing.T) {
 		t.Errorf("repo-b: got %v, want Viewer", roleB)
 	}
 
+	// --- Any-repo gate (org dashboard) ---
+
+	t.Run("anyRepo_granted", func(t *testing.T) {
+		c := NewPermCache(5 * time.Minute)
+		fetch := func(_ context.Context, _, _, repo, _ string) (string, error) {
+			switch repo {
+			case "low":
+				return "read", nil
+			case "high":
+				return "maintain", nil
+			default:
+				return "", errors.New("no access")
+			}
+		}
+		ok, best := HasMinRoleOnAnyRepo(context.Background(), "alice", "tok",
+			[]string{"org/low", "org/high"}, RoleAdmin, c, fetch)
+		if !ok {
+			t.Fatal("expected maintain on org/high to satisfy RoleAdmin")
+		}
+		if best != RoleAdmin {
+			t.Errorf("best role: got %v", best)
+		}
+	})
+	t.Run("anyRepo_denied", func(t *testing.T) {
+		c := NewPermCache(5 * time.Minute)
+		fetch := func(_ context.Context, _, _, _, _ string) (string, error) {
+			return "write", nil
+		}
+		ok, best := HasMinRoleOnAnyRepo(context.Background(), "bob", "tok",
+			[]string{"org/r1", "org/r2"}, RoleAdmin, c, fetch)
+		if ok {
+			t.Fatal("write on all repos should not satisfy RoleAdmin")
+		}
+		if best != RoleApprover {
+			t.Errorf("best role: got %v, want approver", best)
+		}
+	})
+
 	// Re-fetch from cache — must still be isolated.
 	roleA2, _ := cache.Resolve(context.Background(), "alice", "tok", "org", "repo-a", fetcherB) // fetcher would return viewer but cache wins
 	if roleA2 != RoleAdmin {

@@ -257,6 +257,30 @@ func EnforceInHandler(
 	return actual, true
 }
 
+// HasMinRoleOnAnyRepo reports whether login has at least minRole on any repository
+// in fullNames ("owner/repo"). Used for org-level pages (dashboard) when no single
+// repo is in the URL. Returns the highest role seen across all repos (for messaging).
+func HasMinRoleOnAnyRepo(ctx context.Context, login, token string, fullNames []string, minRole Role, cache *PermCache, fetch PermFetcher) (ok bool, best Role) {
+	best = RoleNone
+	for _, fullName := range fullNames {
+		parts := strings.SplitN(fullName, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		role, err := cache.Resolve(ctx, login, token, parts[0], parts[1], fetch)
+		if err != nil {
+			continue
+		}
+		if role > best {
+			best = role
+		}
+		if role >= minRole {
+			return true, role
+		}
+	}
+	return false, best
+}
+
 func writeForbidden(w http.ResponseWriter, msg string, required, actual Role) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
@@ -270,4 +294,9 @@ func writeForbidden(w http.ResponseWriter, msg string, required, actual Role) {
 		RequiredRole: required.String(),
 		ActualRole:   actual.String(),
 	})
+}
+
+// WriteForbiddenJSON writes a 403 JSON body (for non-HTMX API-style callers).
+func WriteForbiddenJSON(w http.ResponseWriter, msg string, required, actual Role) {
+	writeForbidden(w, msg, required, actual)
 }

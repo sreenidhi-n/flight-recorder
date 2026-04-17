@@ -65,6 +65,15 @@ func (m *memStore) GetRepositoryByFullName(_ context.Context, instID int64, name
 	}
 	return nil, nil
 }
+func (m *memStore) ListRepositoriesByInstallation(_ context.Context, instID int64) ([]storage.Repository, error) {
+	var out []storage.Repository
+	for _, r := range m.repositories {
+		if r.InstallationID == instID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
 func (m *memStore) UpdateManifestSHA(_ context.Context, id int64, sha string) error {
 	if r, ok := m.repositories[id]; ok {
 		r.ManifestSHA = sha
@@ -122,6 +131,14 @@ func (m *memStore) GetAuditTrail(_ context.Context, _ int64, _, _ time.Time) ([]
 	return nil, nil
 }
 func (m *memStore) GetManifestHistory(_ context.Context, _ int64, _ int) ([]storage.ManifestSnapshot, error) {
+	return nil, nil
+}
+func (m *memStore) SaveAuditEvent(_ context.Context, _ storage.AuditEvent) error { return nil }
+func (m *memStore) GetAuditEvents(_ context.Context, _ int64, _ string, _, _ int) ([]storage.AuditEvent, error) {
+	return nil, nil
+}
+func (m *memStore) GetLastAuditHash(_ context.Context, _ int64) (string, error) { return "", nil }
+func (m *memStore) GetAuditChainRows(_ context.Context, _ int64) ([]storage.AuditChainRow, error) {
 	return nil, nil
 }
 func (m *memStore) Close() error { return nil }

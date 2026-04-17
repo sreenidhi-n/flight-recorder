@@ -60,13 +60,15 @@ func (h *IndexHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // VerifyPageHandler serves GET /verify/{scan-id}.
 type VerifyPageHandler struct {
-	store    storage.Store
-	sessions *auth.SessionStore
-	baseURL  string
+	store     storage.Store
+	sessions  *auth.SessionStore
+	baseURL   string
+	rbacCache *auth.PermCache
+	fetchPerm auth.PermFetcher
 }
 
-func NewVerifyPageHandler(store storage.Store, sessions *auth.SessionStore, baseURL string) *VerifyPageHandler {
-	return &VerifyPageHandler{store: store, sessions: sessions, baseURL: baseURL}
+func NewVerifyPageHandler(store storage.Store, sessions *auth.SessionStore, baseURL string, rbacCache *auth.PermCache, fetchPerm auth.PermFetcher) *VerifyPageHandler {
+	return &VerifyPageHandler{store: store, sessions: sessions, baseURL: baseURL, rbacCache: rbacCache, fetchPerm: fetchPerm}
 }
 
 func (h *VerifyPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -100,6 +102,21 @@ func (h *VerifyPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// RBAC: Approver (GitHub write+) may open the verify UI.
+	if h.rbacCache != nil && h.fetchPerm != nil && scan.FullName != "" {
+		parts := strings.SplitN(scan.FullName, "/", 2)
+		if len(parts) == 2 {
+			if _, err := h.rbacCache.Enforce(r.Context(), sess.GitHubLogin, sess.AccessToken,
+				parts[0], parts[1], auth.RoleApprover, h.fetchPerm); err != nil {
+				slog.Warn("verify page: rbac denied", "login", sess.GitHubLogin, "repo", scan.FullName, "error", err)
+				render(w, r, http.StatusForbidden,
+					templates.ErrorPage(sess.GitHubLogin, sess.AvatarURL,
+						"You need write access or higher on "+scan.FullName+" to review capabilities for this pull request."))
+				return
+			}
+		}
+	}
+
 	decMap := make(map[string]storage.VerificationDecision, len(decisions))
 	for _, d := range decisions {
 		decMap[d.CapabilityID] = d
@@ -118,13 +135,15 @@ func (h *VerifyPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // DashboardHandler serves GET /dashboard.
 type DashboardHandler struct {
-	store    storage.Store
-	sessions *auth.SessionStore
-	app      *gh.App
+	store     storage.Store
+	sessions  *auth.SessionStore
+	app       *gh.App
+	rbacCache *auth.PermCache
+	fetchPerm auth.PermFetcher
 }
 
-func NewDashboardHandler(store storage.Store, sessions *auth.SessionStore, app *gh.App) *DashboardHandler {
-	return &DashboardHandler{store: store, sessions: sessions, app: app}
+func NewDashboardHandler(store storage.Store, sessions *auth.SessionStore, app *gh.App, rbacCache *auth.PermCache, fetchPerm auth.PermFetcher) *DashboardHandler {
+	return &DashboardHandler{store: store, sessions: sessions, app: app, rbacCache: rbacCache, fetchPerm: fetchPerm}
 }
 
 func (h *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -146,9 +165,30 @@ func (h *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		inst, err := h.store.GetInstallationByLogin(ctx, sess.GitHubLogin)
 		if err != nil {
 			slog.Warn("dashboard: auto-discover installation failed", "login", sess.GitHubLogin, "error", err)
-		} else if inst != nil {
+		} else 		if inst != nil {
 			instID = inst.ID
 			slog.Info("dashboard: auto-discovered installation", "login", sess.GitHubLogin, "installation_id", instID)
+		}
+	}
+
+	// RBAC: org dashboard requires maintain/admin on at least one repo in the installation.
+	if h.rbacCache != nil && h.fetchPerm != nil && instID > 0 {
+		repos, rerr := h.store.ListRepositoriesByInstallation(ctx, instID)
+		if rerr != nil {
+			slog.Error("dashboard: list repos", "installation_id", instID, "error", rerr)
+		} else if len(repos) > 0 {
+			names := make([]string, len(repos))
+			for i := range repos {
+				names[i] = repos[i].FullName
+			}
+			ok, _ := auth.HasMinRoleOnAnyRepo(ctx, sess.GitHubLogin, sess.AccessToken, names, auth.RoleAdmin, h.rbacCache, h.fetchPerm)
+			if !ok {
+				slog.Warn("dashboard: rbac denied", "login", sess.GitHubLogin, "installation_id", instID)
+				render(w, r, http.StatusForbidden,
+					templates.ErrorPage(sess.GitHubLogin, sess.AvatarURL,
+						"The dashboard is limited to maintainers and admins on at least one repository where TASS is installed."))
+				return
+			}
 		}
 	}
 
@@ -185,12 +225,14 @@ func (h *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // RepoDashboardHandler serves GET /dashboard/repo?repo_id=N.
 type RepoDashboardHandler struct {
-	store    storage.Store
-	sessions *auth.SessionStore
+	store     storage.Store
+	sessions  *auth.SessionStore
+	rbacCache *auth.PermCache
+	fetchPerm auth.PermFetcher
 }
 
-func NewRepoDashboardHandler(store storage.Store, sessions *auth.SessionStore) *RepoDashboardHandler {
-	return &RepoDashboardHandler{store: store, sessions: sessions}
+func NewRepoDashboardHandler(store storage.Store, sessions *auth.SessionStore, rbacCache *auth.PermCache, fetchPerm auth.PermFetcher) *RepoDashboardHandler {
+	return &RepoDashboardHandler{store: store, sessions: sessions, rbacCache: rbacCache, fetchPerm: fetchPerm}
 }
 
 func (h *RepoDashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -216,6 +258,20 @@ func (h *RepoDashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		parts := strings.SplitN(repo.FullName, "/", 2)
 		if len(parts) == 2 {
 			appName = parts[1]
+		}
+	}
+
+	if h.rbacCache != nil && h.fetchPerm != nil && repo != nil && repo.FullName != "" {
+		parts := strings.SplitN(repo.FullName, "/", 2)
+		if len(parts) == 2 {
+			if _, err := h.rbacCache.Enforce(ctx, sess.GitHubLogin, sess.AccessToken,
+				parts[0], parts[1], auth.RoleAdmin, h.fetchPerm); err != nil {
+				slog.Warn("repo dashboard: rbac denied", "login", sess.GitHubLogin, "repo", repo.FullName)
+				render(w, r, http.StatusForbidden,
+					templates.ErrorPage(sess.GitHubLogin, sess.AvatarURL,
+						"Repository analytics and generated policies are visible to maintainers and admins only."))
+				return
+			}
 		}
 	}
 
@@ -327,8 +383,15 @@ func (h *UIVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err == nil && scan != nil && scan.FullName != "" {
 			parts := strings.SplitN(scan.FullName, "/", 2)
 			if len(parts) == 2 {
-				if _, ok := auth.EnforceInHandler(w, r, sess.GitHubLogin, sess.AccessToken,
-					parts[0], parts[1], auth.RoleApprover, h.rbacCache, h.fetchPerm); !ok {
+				if actual, err := h.rbacCache.Enforce(r.Context(), sess.GitHubLogin, sess.AccessToken,
+					parts[0], parts[1], auth.RoleApprover, h.fetchPerm); err != nil {
+					if r.Header.Get("HX-Request") == "true" {
+						w.Header().Set("Content-Type", "text/html; charset=utf-8")
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte(`<p style="color:#c00;padding:12px;border:1px solid #c00;border-radius:8px">You need <strong>write</strong> access on this repository to confirm or revert.</p>`))
+						return
+					}
+					auth.WriteForbiddenJSON(w, err.Error(), auth.RoleApprover, actual)
 					return
 				}
 			}
@@ -376,12 +439,14 @@ func (h *UIVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // AuditPageHandler serves GET /audit/{repo_id}[?from=...&to=...].
 type AuditPageHandler struct {
-	store    storage.Store
-	sessions *auth.SessionStore
+	store     storage.Store
+	sessions  *auth.SessionStore
+	rbacCache *auth.PermCache
+	fetchPerm auth.PermFetcher
 }
 
-func NewAuditPageHandler(store storage.Store, sessions *auth.SessionStore) *AuditPageHandler {
-	return &AuditPageHandler{store: store, sessions: sessions}
+func NewAuditPageHandler(store storage.Store, sessions *auth.SessionStore, rbacCache *auth.PermCache, fetchPerm auth.PermFetcher) *AuditPageHandler {
+	return &AuditPageHandler{store: store, sessions: sessions, rbacCache: rbacCache, fetchPerm: fetchPerm}
 }
 
 func (h *AuditPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -403,6 +468,20 @@ func (h *AuditPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	repoName := fmt.Sprintf("repo #%d", repoID)
 	if repo != nil {
 		repoName = repo.FullName
+	}
+
+	if h.rbacCache != nil && h.fetchPerm != nil && repo != nil && repo.FullName != "" {
+		parts := strings.SplitN(repo.FullName, "/", 2)
+		if len(parts) == 2 {
+			if _, err := h.rbacCache.Enforce(ctx, sess.GitHubLogin, sess.AccessToken,
+				parts[0], parts[1], auth.RoleAdmin, h.fetchPerm); err != nil {
+				slog.Warn("audit page: rbac denied", "login", sess.GitHubLogin, "repo", repo.FullName)
+				render(w, r, http.StatusForbidden,
+					templates.ErrorPage(sess.GitHubLogin, sess.AvatarURL,
+						"The audit trail is visible to maintainers and admins on this repository only."))
+				return
+			}
+		}
 	}
 
 	fromStr := r.URL.Query().Get("from")

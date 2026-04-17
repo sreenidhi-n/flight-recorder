@@ -4,8 +4,10 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -16,6 +18,10 @@ import (
 	"github.com/tass-security/tass/pkg/contracts"
 	_ "modernc.org/sqlite"
 )
+
+// sha256New is an alias so the helper functions below can reference the hash constructor
+// without importing it a second time.
+var sha256New = sha256.New
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
@@ -32,6 +38,7 @@ type Store interface {
 	UpsertRepository(ctx context.Context, repo Repository) error
 	GetRepository(ctx context.Context, id int64) (*Repository, error)
 	GetRepositoryByFullName(ctx context.Context, installationID int64, fullName string) (*Repository, error)
+	ListRepositoriesByInstallation(ctx context.Context, installationID int64) ([]Repository, error)
 	UpdateManifestSHA(ctx context.Context, repoID int64, sha string) error
 
 	// Scan results
@@ -49,10 +56,16 @@ type Store interface {
 	GetStatsByInstallation(ctx context.Context, installationID int64) (*InstallationStats, error)
 	GetRecentScans(ctx context.Context, installationID int64, limit int) ([]RecentScan, error)
 
-	// Audit trail
+	// Audit trail (legacy — manifest history + verification decisions)
 	SaveManifestSnapshot(ctx context.Context, s ManifestSnapshot) error
 	GetAuditTrail(ctx context.Context, repoID int64, from, to time.Time) ([]AuditEntry, error)
 	GetManifestHistory(ctx context.Context, repoID int64, limit int) ([]ManifestSnapshot, error)
+
+	// Tamper-evident audit events (hash chain, NIST AU-9(3) / AU-10(3))
+	SaveAuditEvent(ctx context.Context, evt AuditEvent) error
+	GetAuditEvents(ctx context.Context, tenantID int64, repo string, limit int, offset int) ([]AuditEvent, error)
+	GetLastAuditHash(ctx context.Context, tenantID int64) (string, error)
+	GetAuditChainRows(ctx context.Context, tenantID int64) ([]AuditChainRow, error)
 
 	Close() error
 }
@@ -182,6 +195,43 @@ type AuditEntry struct {
 	// manifest fields
 	CommitSHA   string
 	CommittedBy string
+}
+
+// AuditEvent is one row in the tamper-evident audit_events table.
+// Mirrors audit.AuditEvent — duplicated here to avoid circular imports.
+type AuditEvent struct {
+	ID         string
+	Ts         time.Time
+	TenantID   int64
+	ActorGHID  int64
+	ActorLogin string
+	Repo       string
+	Action     string
+	TargetID   string
+	BeforeJSON string
+	AfterJSON  string
+	IP         string
+	UserAgent  string
+	PrevHash   string
+	Hash       string
+}
+
+// AuditChainRow is the minimal projection used by chain verification.
+type AuditChainRow struct {
+	ID         string
+	Ts         string // RFC3339 stored string (not parsed, for hash stability)
+	TenantID   int64
+	ActorGHID  int64
+	ActorLogin string
+	Repo       string
+	Action     string
+	TargetID   string
+	BeforeJSON string
+	AfterJSON  string
+	IP         string
+	UserAgent  string
+	PrevHash   string
+	Hash       string
 }
 
 // InstallationStats aggregates analytics across all repos under one GitHub App installation.
@@ -345,6 +395,33 @@ func (s *SQLiteStore) GetRepositoryByFullName(ctx context.Context, installationI
 		FROM repositories WHERE installation_id = ? AND full_name = ?
 	`, installationID, fullName)
 	return scanRepository(row)
+}
+
+func (s *SQLiteStore) ListRepositoriesByInstallation(ctx context.Context, installationID int64) ([]Repository, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, installation_id, full_name, default_branch, COALESCE(manifest_sha,''), created_at
+		FROM repositories WHERE installation_id = ?
+		ORDER BY full_name
+	`, installationID)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list repos for installation %d: %w", installationID, err)
+	}
+	defer rows.Close()
+
+	var out []Repository
+	for rows.Next() {
+		var r Repository
+		var createdAt string
+		if err := rows.Scan(&r.ID, &r.InstallationID, &r.FullName, &r.DefaultBranch, &r.ManifestSHA, &createdAt); err != nil {
+			return nil, fmt.Errorf("storage: scan repository row: %w", err)
+		}
+		r.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: iterate repositories: %w", err)
+	}
+	return out, nil
 }
 
 func (s *SQLiteStore) UpdateManifestSHA(ctx context.Context, repoID int64, sha string) error {
@@ -786,4 +863,208 @@ func (s *SQLiteStore) GetStatsByInstallation(ctx context.Context, installationID
 	}
 
 	return stats, nil
+}
+
+// --- Tamper-evident audit events (NIST AU-9(3) / AU-10(3)) ---
+
+func (s *SQLiteStore) SaveAuditEvent(ctx context.Context, evt AuditEvent) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("storage: SaveAuditEvent begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var prevHash string
+	err = tx.QueryRowContext(ctx,
+		`SELECT hash FROM audit_events WHERE tenant_id = ? ORDER BY ts DESC, id DESC LIMIT 1`,
+		evt.TenantID,
+	).Scan(&prevHash)
+	if err != nil && err.Error() != "sql: no rows in result set" {
+		return fmt.Errorf("storage: SaveAuditEvent get prev_hash: %w", err)
+	}
+
+	tsStr := evt.Ts.UTC().Format(time.RFC3339Nano)
+	input := auditHashInput{
+		ID: evt.ID, Ts: tsStr, TenantID: evt.TenantID,
+		ActorGHID: evt.ActorGHID, ActorLogin: evt.ActorLogin,
+		Repo: evt.Repo, Action: evt.Action, TargetID: evt.TargetID,
+		BeforeJSON: evt.BeforeJSON, AfterJSON: evt.AfterJSON,
+		IP: evt.IP, UserAgent: evt.UserAgent, PrevHash: prevHash,
+	}
+	hash, err := computeAuditHash(prevHash, input)
+	if err != nil {
+		return fmt.Errorf("storage: SaveAuditEvent compute hash: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT OR IGNORE INTO audit_events
+		  (id, ts, tenant_id, actor_gh_id, actor_login, repo, action,
+		   target_id, before_json, after_json, ip, user_agent, prev_hash, hash)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		evt.ID, tsStr,
+		evt.TenantID, evt.ActorGHID, evt.ActorLogin,
+		evt.Repo, evt.Action, evt.TargetID,
+		evt.BeforeJSON, evt.AfterJSON,
+		evt.IP, evt.UserAgent,
+		prevHash, hash,
+	)
+	if err != nil {
+		return fmt.Errorf("storage: SaveAuditEvent insert: %w", err)
+	}
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) GetAuditEvents(ctx context.Context, tenantID int64, repo string, limit, offset int) ([]AuditEvent, error) {
+	var rows *sql.Rows
+	var err error
+	if repo == "" {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, ts, tenant_id, actor_gh_id, actor_login, repo, action,
+			       target_id, before_json, after_json, ip, user_agent, prev_hash, hash
+			FROM audit_events WHERE tenant_id = ?
+			ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`,
+			tenantID, limit, offset)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, ts, tenant_id, actor_gh_id, actor_login, repo, action,
+			       target_id, before_json, after_json, ip, user_agent, prev_hash, hash
+			FROM audit_events WHERE tenant_id = ? AND repo = ?
+			ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`,
+			tenantID, repo, limit, offset)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("storage: GetAuditEvents: %w", err)
+	}
+	defer rows.Close()
+	return scanAuditEventRows(rows)
+}
+
+func (s *SQLiteStore) GetLastAuditHash(ctx context.Context, tenantID int64) (string, error) {
+	var h string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT hash FROM audit_events WHERE tenant_id = ? ORDER BY ts DESC, id DESC LIMIT 1`,
+		tenantID,
+	).Scan(&h)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("storage: GetLastAuditHash: %w", err)
+	}
+	return h, nil
+}
+
+func (s *SQLiteStore) GetAuditChainRows(ctx context.Context, tenantID int64) ([]AuditChainRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, ts, tenant_id, actor_gh_id, actor_login, repo, action,
+		       target_id, before_json, after_json, ip, user_agent, prev_hash, hash
+		FROM audit_events WHERE tenant_id = ?
+		ORDER BY ts ASC, id ASC`,
+		tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("storage: GetAuditChainRows: %w", err)
+	}
+	defer rows.Close()
+
+	var out []AuditChainRow
+	for rows.Next() {
+		var r AuditChainRow
+		if err := rows.Scan(
+			&r.ID, &r.Ts, &r.TenantID, &r.ActorGHID, &r.ActorLogin,
+			&r.Repo, &r.Action, &r.TargetID,
+			&r.BeforeJSON, &r.AfterJSON, &r.IP, &r.UserAgent,
+			&r.PrevHash, &r.Hash,
+		); err != nil {
+			return nil, fmt.Errorf("storage: GetAuditChainRows scan: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func scanAuditEventRows(rows *sql.Rows) ([]AuditEvent, error) {
+	var out []AuditEvent
+	for rows.Next() {
+		var e AuditEvent
+		var ts string
+		if err := rows.Scan(
+			&e.ID, &ts, &e.TenantID, &e.ActorGHID, &e.ActorLogin,
+			&e.Repo, &e.Action, &e.TargetID,
+			&e.BeforeJSON, &e.AfterJSON, &e.IP, &e.UserAgent,
+			&e.PrevHash, &e.Hash,
+		); err != nil {
+			return nil, fmt.Errorf("storage: scan audit event row: %w", err)
+		}
+		t, _ := time.Parse(time.RFC3339Nano, ts)
+		e.Ts = t
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// --- Hash chain helpers (mirrors audit.chain to avoid circular import) ---
+
+type auditHashInput struct {
+	ID         string `json:"id"`
+	Ts         string `json:"ts"`
+	TenantID   int64  `json:"tenant_id"`
+	ActorGHID  int64  `json:"actor_gh_id"`
+	ActorLogin string `json:"actor_login"`
+	Repo       string `json:"repo"`
+	Action     string `json:"action"`
+	TargetID   string `json:"target_id"`
+	BeforeJSON string `json:"before_json"`
+	AfterJSON  string `json:"after_json"`
+	IP         string `json:"ip"`
+	UserAgent  string `json:"user_agent"`
+	PrevHash   string `json:"prev_hash"`
+}
+
+func computeAuditHash(prevHash string, input auditHashInput) (string, error) {
+	b, err := json.Marshal(input)
+	if err != nil {
+		return "", err
+	}
+	var generic any
+	_ = json.Unmarshal(b, &generic)
+	canonical, _ := json.Marshal(sortCanonicalKeys(generic))
+
+	h := sha256New()
+	h.Write([]byte(prevHash))
+	h.Write(canonical)
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func sortCanonicalKeys(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var sb strings.Builder
+		sb.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				sb.WriteByte(',')
+			}
+			kb, _ := json.Marshal(k)
+			vb, _ := json.Marshal(sortCanonicalKeys(val[k]))
+			sb.Write(kb)
+			sb.WriteByte(':')
+			sb.Write(vb)
+		}
+		sb.WriteByte('}')
+		var out any
+		_ = json.Unmarshal([]byte(sb.String()), &out)
+		return out
+	case []any:
+		for i, item := range val {
+			val[i] = sortCanonicalKeys(item)
+		}
+		return val
+	default:
+		return v
+	}
 }

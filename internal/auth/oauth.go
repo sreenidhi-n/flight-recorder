@@ -39,10 +39,11 @@ func (h *OAuthHandler) HandleStart(w http.ResponseWriter, r *http.Request) {
 	if returnTo == "" || !strings.HasPrefix(returnTo, "/") {
 		returnTo = "/dashboard"
 	}
+	// read:user — profile; repo — collaborator permission checks on private repos (RBAC).
 	params := url.Values{
 		"client_id":    {h.cfg.ClientID},
 		"redirect_uri": {h.callbackURL()},
-		"scope":        {"read:user"},
+		"scope":        {"read:user repo"},
 		"state":        {returnTo},
 	}
 	http.Redirect(w, r,
