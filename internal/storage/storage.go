@@ -38,6 +38,9 @@ type Store interface {
 	UpsertRepository(ctx context.Context, repo Repository) error
 	GetRepository(ctx context.Context, id int64) (*Repository, error)
 	GetRepositoryByFullName(ctx context.Context, installationID int64, fullName string) (*Repository, error)
+	// FindRepoByName looks up a repository by full name without requiring an installation ID.
+	// Intended for CLI commands (trusted local DB access) — not for multi-tenant API paths.
+	FindRepoByName(ctx context.Context, fullName string) (*Repository, error)
 	ListRepositoriesByInstallation(ctx context.Context, installationID int64) ([]Repository, error)
 	UpdateManifestSHA(ctx context.Context, repoID int64, sha string) error
 
@@ -394,6 +397,14 @@ func (s *SQLiteStore) GetRepositoryByFullName(ctx context.Context, installationI
 		SELECT id, installation_id, full_name, default_branch, COALESCE(manifest_sha,''), created_at
 		FROM repositories WHERE installation_id = ? AND full_name = ?
 	`, installationID, fullName)
+	return scanRepository(row)
+}
+
+func (s *SQLiteStore) FindRepoByName(ctx context.Context, fullName string) (*Repository, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, installation_id, full_name, default_branch, COALESCE(manifest_sha,''), created_at
+		FROM repositories WHERE full_name = ? LIMIT 1
+	`, fullName)
 	return scanRepository(row)
 }
 

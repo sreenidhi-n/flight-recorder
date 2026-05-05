@@ -57,6 +57,14 @@ func (m *memStore) GetRepository(_ context.Context, id int64) (*storage.Reposito
 	}
 	return nil, nil
 }
+func (m *memStore) FindRepoByName(_ context.Context, name string) (*storage.Repository, error) {
+	for _, r := range m.repositories {
+		if r.FullName == name {
+			return &r, nil
+		}
+	}
+	return nil, nil
+}
 func (m *memStore) GetRepositoryByFullName(_ context.Context, instID int64, name string) (*storage.Repository, error) {
 	for _, r := range m.repositories {
 		if r.InstallationID == instID && r.FullName == name {

@@ -1,0 +1,8 @@
+{
+  "name": "tass-scripts",
+  "version": "1.0.0",
+  "description": "Utility scripts for TASS — DEMO",
+  "dependencies": {
+    "axios": "^1.6.0"
+  }
+}

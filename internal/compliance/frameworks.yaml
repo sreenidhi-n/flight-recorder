@@ -1,0 +1,70 @@
+# Verified against:
+# - AICPA TSP Section 100 (2017 TSC w/ 2022 Revised Points of Focus)
+# - ISO/IEC 27001:2022 Annex A
+# - NIST SP 800-53 Rev 5 (Dec 2020 errata, 5.2.0 updates)
+
+frameworks:
+  soc2:
+    name: "SOC 2 (AICPA TSP 100, 2017 TSC / 2022 PoF)"
+    authority: "AICPA"
+  iso27001:
+    name: "ISO/IEC 27001:2022 Annex A"
+    authority: "ISO/IEC"
+  nist80053:
+    name: "NIST SP 800-53 Rev 5"
+    authority: "NIST"
+
+city_mappings:
+  network_access:
+    description: "Code introduces outbound network calls, HTTP clients, cloud SDK initialization, or API client instantiation"
+    soc2: [CC6.6, CC6.7]
+    iso27001: [A.8.20, A.8.21, A.8.22]
+    nist80053: [SC-7, AC-4]
+
+  privilege_escalation:
+    description: "Code invokes elevated privileges, sudo, setuid, or shell exec with admin context"
+    soc2: [CC6.1, CC6.3]
+    iso27001: [A.5.15, A.8.2]
+    nist80053: [AC-5, AC-6, "AC-6(9)"]
+
+  dependency:
+    description: "New third-party packages added to manifest files (go.mod, requirements.txt, package.json, Cargo.toml)"
+    soc2: [CC6.8, CC7.1, CC8.1]
+    iso27001: [A.8.8, A.8.9, A.8.28, A.8.32]
+    nist80053: ["CM-7(5)", CM-3, CM-8, SR-3, SR-4, RA-5]
+
+  database:
+    description: "Code opens database connections or introduces new SQL/NoSQL client usage"
+    soc2: [CC6.1, CC6.3]
+    iso27001: [A.5.15, A.8.3]
+    nist80053: [AC-3, AC-6]
+
+  filesystem:
+    description: "Code reads, writes, or modifies files outside the repository working directory"
+    soc2: [CC6.1, CC6.7]
+    iso27001: [A.8.3, A.8.4]
+    nist80053: [AC-3, AC-6, SI-7]
+
+  external_api:
+    description: "Code integrates with external API services including AI/ML APIs, MCP servers, OAuth providers"
+    soc2: [CC6.6, CC6.7, CC9.2]
+    iso27001: [A.5.23, A.8.20, A.8.21]
+    nist80053: [SC-7, SA-9, SR-3]
+
+tass_product_controls:
+  # What TASS itself provides — self-attestation section of report
+  rbac_enforcement:
+    implemented_by: "internal/auth/rbac.go"
+    soc2: [CC6.1, CC6.3]
+    iso27001: [A.5.15, A.5.18, A.8.2]
+    nist80053: [AC-2, AC-3, AC-5, AC-6, "AC-6(9)"]
+  tamper_evident_audit:
+    implemented_by: "internal/audit/chain.go"
+    soc2: [CC7.2, CC7.3]
+    iso27001: [A.8.15, A.8.16]
+    nist80053: [AU-2, AU-3, AU-9, "AU-9(3)", AU-10, "AU-10(3)", AU-12]
+  block_until_confirmed:
+    implemented_by: "internal/manifest/validator.go"
+    soc2: [CC7.1, CC8.1]
+    iso27001: [A.8.9, A.8.32]
+    nist80053: [CM-3, CM-5, "CM-7(5)"]

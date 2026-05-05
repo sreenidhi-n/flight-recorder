@@ -42,20 +42,97 @@ internal/github/webhook.go   Webhook signature verification
 
 internal/scanner/            Layer 0 dep diff + Layer 1 AST scanning
 internal/server/             HTTP server, routing, rate limiting, API handlers
-internal/server/audit.go     [TO CREATE] GET /api/audit handler
+internal/server/audit.go     GET /api/audit handler + chain verify + NDJSON export
+internal/server/audit_adapter.go  Bridges storage.Store → audit.Storer (type adapter)
+internal/server/compliance.go     GET /compliance/:repo — Admin-only compliance report
 internal/storage/storage.go  SQLite store
-internal/storage/migrations/ SQL migrations (001-003 exist, 004 to create)
+internal/storage/migrations/ SQL migrations (001, 003, 004, 005)
+
+internal/auth/rbac.go        Roles: Viewer < Developer < Approver < Admin
+                             Derived from GitHub collaborator permissions.
+                             PermCache: sync.Map-backed, 5-min TTL, keyed by (login, owner/repo).
+                             Compliance mapping: SOC 2 CC6.1/CC6.3, ISO A.5.15/A.5.18/A.8.2,
+                             NIST AC-2/AC-3/AC-5/AC-6/AC-6(9).
+
+internal/audit/log.go        Tamper-evident audit event emission.
+                             audit.Emitter is the only way to write audit events.
+                             Actor info is pulled from context (set by HTTP middleware).
+                             Compliance mapping: SOC 2 CC7.2/CC7.3, ISO A.8.15/A.8.16,
+                             NIST AU-2/AU-3/AU-9/AU-9(3)/AU-10/AU-10(3)/AU-12.
+internal/audit/chain.go      Hash chain verification (NIST AU-9(3)/AU-10(3)).
+                             VerifyChain(rows) recomputes SHA-256 chain and returns first break.
+                             Chain is per-tenant (tenant_id) for multi-tenant isolation.
+
+internal/compliance/         Compliance framework mapping + evidence report generation.
+  frameworks.yaml            LOCKED mapping of capability categories to SOC 2 / ISO 27001 /
+                             NIST 800-53 control IDs. Also contains TASS self-attestation controls.
+                             Key "city_mappings" is as specified — do not rename.
+  mapper.go                  Loads frameworks.yaml (//go:embed). ControlIDs(cat, fw) → []string.
+  report.go                  Generator.Generate() → *Report. Three render methods: ToMarkdown(),
+                             ToJSON(), ToPDF(). Report hash covers only deterministic ReportData.
+                             Returns ErrChainBroken (wrapped) when audit chain fails.
+  pdf.go                     Minimal PDF writer (no external dependencies, standard Type1 fonts).
+                             Supports multi-page, section headers, tables, colored banners.
 
 internal/ui/handlers.go      UI page handlers
 internal/ui/ui.go            UI router
-internal/ui/static/style.css [TO REPLACE] CSS design system
-internal/ui/templates/       Templ files (layout, index, dashboard, verify, setup)
-internal/ui/templates/audit.templ [TO CREATE]
+internal/ui/static/style.css Custom CSS design system (no Pico CSS)
+internal/ui/templates/       Templ files (layout, index, dashboard, verify, setup, audit)
 
 pkg/contracts/contracts.go   Shared types
 pkg/manifest/manifest.go     Manifest YAML read/write/diff
 rules/                       Tree-sitter .scm + .meta.yaml rule files
 ```
+
+## Architecture Notes
+
+### auth/ package — RBAC
+
+`internal/auth/rbac.go` implements role-based access control derived from GitHub collaborator
+permissions. Roles are ordered integers (`Viewer=1 < Developer=2 < Approver=3 < Admin=4`).
+
+- `PermCache.Resolve()` — live GitHub API call with 5-min TTL cache, keyed by `(login, "owner/repo")`
+- `PermCache.Enforce(minRole)` — returns `(actualRole, *DeniedError)`, fails closed on API error
+- `EnforceInHandler()` — convenience wrapper for in-handler enforcement; writes 403 JSON and returns false
+- `HasMinRoleOnAnyRepo()` — for org-level pages where no single repo is in the URL
+- `RequireRoleMiddleware()` — route-level middleware form
+
+Every `permission_denied` event must be audit-logged by the caller (NIST AC-6(9)).
+
+### audit/ package — Tamper-evident log
+
+`internal/audit/log.go` exports `Emitter.Emit(ctx, action, targetID, before, after)`.
+Actor info (tenantID, login, IP, UA) is pulled from context via `WithActor(ctx, ActorInfo)`.
+
+`internal/audit/chain.go` implements the per-tenant SHA-256 hash chain:
+- `hash = sha256(prev_hash || canonical_json(event_without_hash))`
+- `VerifyChain(rows []ChainRow) VerifyResult` — recomputes chain, returns first broken ID
+
+`audit.Storer` and `storage.Store` use mirrored types (`audit.AuditEvent` vs `storage.AuditEvent`)
+to avoid a circular import. `internal/server/audit_adapter.go` bridges them.
+
+### compliance/ package
+
+`Generator.Generate(ctx, repo, framework, since)` aggregates all scans for the repo, deduplicates
+capabilities by ID (latest scan wins), verifies the audit chain, and builds a fully sorted,
+map-free `ReportData` struct (ensuring deterministic JSON marshaling for the report hash).
+
+Returning `ErrChainBroken` means the report is returned but should not be submitted as evidence.
+The CLI exits with code 2. The web handler returns HTTP 207 with `X-TASS-Chain-Integrity: broken`.
+
+PDF rendering is done in `pdf.go` using a minimal built-in PDF writer (no `gofpdf` dependency).
+Uses standard PDF Type1 core fonts (Helvetica, Courier) — no external font files required.
+
+## Framework Versions (LOCKED)
+
+These are the exact document versions used in `internal/compliance/frameworks.yaml`.
+Do not change control IDs without re-verifying against the source documents.
+
+| Framework | Version |
+|---|---|
+| SOC 2 | AICPA TSP Section 100 (2017 TSC w/ 2022 Revised Points of Focus) |
+| ISO 27001 | ISO/IEC 27001:2022 Annex A |
+| NIST 800-53 | NIST SP 800-53 Rev 5 (Dec 2020 errata, 5.2.0 updates) |
 
 ## Design System (replacing Pico CSS)
 
