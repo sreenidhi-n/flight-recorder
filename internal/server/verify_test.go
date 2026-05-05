@@ -48,6 +48,14 @@ func (m *serverMemStore) UpsertRepository(_ context.Context, r storage.Repositor
 func (m *serverMemStore) GetRepository(_ context.Context, id int64) (*storage.Repository, error) {
 	if r, ok := m.repositories[id]; ok { return &r, nil }; return nil, nil
 }
+func (m *serverMemStore) FindRepoByName(_ context.Context, name string) (*storage.Repository, error) {
+	for _, r := range m.repositories {
+		if r.FullName == name {
+			return &r, nil
+		}
+	}
+	return nil, nil
+}
 func (m *serverMemStore) GetRepositoryByFullName(_ context.Context, _ int64, _ string) (*storage.Repository, error) {
 	return nil, nil
 }

@@ -63,6 +63,7 @@ type Handlers struct {
 	APIAuditNDJSON http.Handler // GET  /api/audit/events.ndjson (Admin)
 	APIPolicy      http.Handler // GET  /api/policy
 	APIImport     http.Handler // POST /api/import (CLI export / air-gap mode)
+	Compliance    http.Handler // GET  /compliance/ (Admin — compliance report)
 	Index         http.Handler // GET  /
 	VerifyPage    http.Handler // GET  /verify/
 	Dashboard     http.Handler // GET  /dashboard
@@ -126,6 +127,7 @@ func BuildMux(h Handlers) *http.ServeMux {
 	mux.Handle("/api/audit", h.APIAudit)
 	mux.Handle("/api/policy", h.APIPolicy)
 	mux.Handle("/api/import", h.APIImport)
+	mux.Handle("/compliance/", h.Compliance)
 
 	// Web UI pages (authenticated)
 	mux.Handle("/verify/", h.VerifyPage)

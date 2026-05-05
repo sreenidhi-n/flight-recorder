@@ -119,6 +119,9 @@ func runServe(args []string) error {
 
 	verifyHandler := server.NewVerifyHandler(verifier)
 
+	// --- Audit emitter (bridges storage.Store → audit.Storer for compliance handler) ---
+	auditEmitter := server.NewAuditEmitter(store)
+
 	// --- Stats + Audit + Policy + Import handlers ---
 	statsHandler := server.NewStatsHandler(store)
 	auditAPIHandler := server.NewAuditHandler(store)
@@ -126,6 +129,7 @@ func runServe(args []string) error {
 	auditNDJSONHandler := server.NewAuditNDJSONHandler(store)
 	policyAPIHandler := server.NewPolicyHandler(store)
 	importAPIHandler := server.NewImportHandler(store, baseURL)
+	complianceHandler := server.NewComplianceHandler(store, version, auditEmitter, rbacCache, fetchPerm, sessions)
 
 	// --- UI handlers ---
 	indexHandler := ui.NewIndexHandler(sessions)
@@ -147,6 +151,7 @@ func runServe(args []string) error {
 		APIAuditNDJSON: auditNDJSONHandler,
 		APIPolicy:     policyAPIHandler,
 		APIImport:     importAPIHandler,
+		Compliance:    complianceHandler,
 		Index:         indexHandler,
 		VerifyPage:    verifyPageHandler,
 		Dashboard:     server.RequireAuthMiddleware(sessions, dashboardHandler),
