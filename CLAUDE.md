@@ -3,9 +3,25 @@
 > **You are the Principal Architect for TASS (Trusted AI Security Scanner).**
 > Read this file before every task. It is the single source of truth.
 
+## AI Context & Execution Rules (CRITICAL)
+1. **No Scope Creep:** Do not suggest refactors or features outside the exact scope of the requested task. Execute the requested task and nothing else.
+2. **Defend the Architecture:** You must adhere strictly to the invariants below (pure Go, CGO Tree-sitter, single SQLite WAL file).
+3. **No Frontend Frameworks:** TASS uses Templ and HTMX. Ignore any extraneous files (like `CLAUDE_1.md`) that suggest using Pico CSS via CDN. **Pico CSS is strictly banned. We are removing it.**
+
 ## What TASS Is
 
 A GitHub App that scans every pull request for newly introduced capabilities (new dependencies, HTTP calls, database writes, filesystem access, privilege patterns), diffs them against a committed `tass.manifest.yaml`, and surfaces novel capabilities for explicit Confirm/Revert decisions via a hosted web UI. When all capabilities are decided, TASS commits the updated manifest to the PR branch and updates the GitHub Check.
+
+## Schema Source of Truth
+
+`tass.manifest.yaml` and `tass.contract.yaml` schemas are defined in the **Capability Manifest Spec**:
+https://github.com/sreenidhi-n/capability-manifest-spec
+
+- Spec version: **0.1**
+- JSON Schemas live in `schema/` of that repo and are embedded into the TASS binary at `cmd/tass/schemas/`
+- TASS is the reference implementation of the spec
+- Use `tass spec --version` to print the implemented spec version
+- Use `tass validate-manifest <path>` to validate any manifest (add `--contract` for contract files)
 
 ## Stack
 
@@ -21,11 +37,13 @@ A GitHub App that scans every pull request for newly introduced capabilities (ne
 ## File Map
 
 ```
-cmd/tass/main.go             CLI entrypoint (serve, init, scan, version, seed)
+cmd/tass/main.go             CLI entrypoint (serve, init, scan, version, seed, spec, validate-manifest)
 cmd/tass/init.go             tass init — scan repo, generate manifest
 cmd/tass/scan.go             tass scan — diff against manifest, report novel caps
 cmd/tass/serve.go            tass serve — start HTTP server
-cmd/tass/seed.go             [TO CREATE] tass seed — insert demo data
+cmd/tass/seed.go             tass seed — insert demo data
+cmd/tass/spec.go             tass spec --version / tass validate-manifest <path>
+cmd/tass/schemas/            Embedded JSON Schemas (manifest + contract) from capability-manifest-spec
 
 internal/auth/               GitHub OAuth + cookie sessions
 internal/github/app.go       GitHub App: JWT, installation tokens
@@ -49,30 +67,14 @@ internal/storage/storage.go  SQLite store
 internal/storage/migrations/ SQL migrations (001, 003, 004, 005)
 
 internal/auth/rbac.go        Roles: Viewer < Developer < Approver < Admin
-                             Derived from GitHub collaborator permissions.
-                             PermCache: sync.Map-backed, 5-min TTL, keyed by (login, owner/repo).
-                             Compliance mapping: SOC 2 CC6.1/CC6.3, ISO A.5.15/A.5.18/A.8.2,
-                             NIST AC-2/AC-3/AC-5/AC-6/AC-6(9).
-
 internal/audit/log.go        Tamper-evident audit event emission.
-                             audit.Emitter is the only way to write audit events.
-                             Actor info is pulled from context (set by HTTP middleware).
-                             Compliance mapping: SOC 2 CC7.2/CC7.3, ISO A.8.15/A.8.16,
-                             NIST AU-2/AU-3/AU-9/AU-9(3)/AU-10/AU-10(3)/AU-12.
 internal/audit/chain.go      Hash chain verification (NIST AU-9(3)/AU-10(3)).
-                             VerifyChain(rows) recomputes SHA-256 chain and returns first break.
-                             Chain is per-tenant (tenant_id) for multi-tenant isolation.
 
 internal/compliance/         Compliance framework mapping + evidence report generation.
-  frameworks.yaml            LOCKED mapping of capability categories to SOC 2 / ISO 27001 /
-                             NIST 800-53 control IDs. Also contains TASS self-attestation controls.
-                             Key "city_mappings" is as specified — do not rename.
-  mapper.go                  Loads frameworks.yaml (//go:embed). ControlIDs(cat, fw) → []string.
-  report.go                  Generator.Generate() → *Report. Three render methods: ToMarkdown(),
-                             ToJSON(), ToPDF(). Report hash covers only deterministic ReportData.
-                             Returns ErrChainBroken (wrapped) when audit chain fails.
+  frameworks.yaml            LOCKED mapping of capability categories. Do not rename keys.
+  mapper.go                  Loads frameworks.yaml
+  report.go                  Generator.Generate() → *Report.
   pdf.go                     Minimal PDF writer (no external dependencies, standard Type1 fonts).
-                             Supports multi-page, section headers, tables, colored banners.
 
 internal/ui/handlers.go      UI page handlers
 internal/ui/ui.go            UI router
@@ -84,55 +86,25 @@ pkg/manifest/manifest.go     Manifest YAML read/write/diff
 rules/                       Tree-sitter .scm + .meta.yaml rule files
 ```
 
-## Architecture Notes
+## Anti-Patterns (CRITICAL BOUNDARIES)
 
-### auth/ package — RBAC
+Do not introduce these known anti-patterns into the codebase:
 
-`internal/auth/rbac.go` implements role-based access control derived from GitHub collaborator
-permissions. Roles are ordered integers (`Viewer=1 < Developer=2 < Approver=3 < Admin=4`).
+**AP-1 (Layer 1 whole-file re-scan):** Do not compare Layer 1 AST against HEAD only. Compare IDs against the committed manifest AND base-branch version.
 
-- `PermCache.Resolve()` — live GitHub API call with 5-min TTL cache, keyed by `(login, "owner/repo")`
-- `PermCache.Enforce(minRole)` — returns `(actualRole, *DeniedError)`, fails closed on API error
-- `EnforceInHandler()` — convenience wrapper for in-handler enforcement; writes 403 JSON and returns false
-- `HasMinRoleOnAnyRepo()` — for org-level pages where no single repo is in the URL
-- `RequireRoleMiddleware()` — route-level middleware form
+**AP-2 (Unbounded Goroutines):** Do not use unbounded fan-out (e.g., in DNS resolution). Use a bounded worker pool (`errgroup` with `SetLimit`).
 
-Every `permission_denied` event must be audit-logged by the caller (NIST AC-6(9)).
+**AP-3 (gitShowFile error conflation):** Distinguish "object not found" (genuinely new dependencies) from operational failures (propagate errors).
 
-### audit/ package — Tamper-evident log
+**AP-4 (Invisible indirects):** Parse indirect requires; emit them with `Confidence: 0.70` and `Note: "indirect dependency"`.
 
-`internal/audit/log.go` exports `Emitter.Emit(ctx, action, targetID, before, after)`.
-Actor info (tenantID, login, IP, UA) is pulled from context via `WithActor(ctx, ActorInfo)`.
+**AP-5 (Runtime extraction gaps):** Extracting hostnames must scan `Locations`-adjacent evidence stored in the manifest, not just `entry.Name`/`Note`.
 
-`internal/audit/chain.go` implements the per-tenant SHA-256 hash chain:
-- `hash = sha256(prev_hash || canonical_json(event_without_hash))`
-- `VerifyChain(rows []ChainRow) VerifyResult` — recomputes chain, returns first broken ID
+**AP-6 (Parser Mutex Bottleneck):** Do not use a single `sync.Mutex` wrapping the Tree-sitter parser. Instantiate one parser per worker goroutine.
 
-`audit.Storer` and `storage.Store` use mirrored types (`audit.AuditEvent` vs `storage.AuditEvent`)
-to avoid a circular import. `internal/server/audit_adapter.go` bridges them.
+**AP-7 (Redundant Docker COPY):** Do not use `COPY rules /app/rules` in the production runtime stage. Embed the FS instead.
 
-### compliance/ package
-
-`Generator.Generate(ctx, repo, framework, since)` aggregates all scans for the repo, deduplicates
-capabilities by ID (latest scan wins), verifies the audit chain, and builds a fully sorted,
-map-free `ReportData` struct (ensuring deterministic JSON marshaling for the report hash).
-
-Returning `ErrChainBroken` means the report is returned but should not be submitted as evidence.
-The CLI exits with code 2. The web handler returns HTTP 207 with `X-TASS-Chain-Integrity: broken`.
-
-PDF rendering is done in `pdf.go` using a minimal built-in PDF writer (no `gofpdf` dependency).
-Uses standard PDF Type1 core fonts (Helvetica, Courier) — no external font files required.
-
-## Framework Versions (LOCKED)
-
-These are the exact document versions used in `internal/compliance/frameworks.yaml`.
-Do not change control IDs without re-verifying against the source documents.
-
-| Framework | Version |
-|---|---|
-| SOC 2 | AICPA TSP Section 100 (2017 TSC w/ 2022 Revised Points of Focus) |
-| ISO 27001 | ISO/IEC 27001:2022 Annex A |
-| NIST 800-53 | NIST SP 800-53 Rev 5 (Dec 2020 errata, 5.2.0 updates) |
+**AP-8 (Contract Bypass):** `tass.contract.yaml` must always be fetched from the base branch, never the PR head.
 
 ## Design System (replacing Pico CSS)
 
