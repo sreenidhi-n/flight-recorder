@@ -140,6 +140,8 @@ func runServe(args []string) error {
 	repoDashboardHandler := ui.NewRepoDashboardHandler(store, sessions, rbacCache, fetchPerm)
 	auditPageHandler := ui.NewAuditPageHandler(store, sessions, rbacCache, fetchPerm)
 	graphHandler := ui.NewGraphPageHandler(store, sessions, rbacCache, fetchPerm)
+	graphMitigationHandler := ui.NewGraphMitigationHandler(sessions)
+	apiGraphHandler := ui.NewApiGraphHandler(store, sessions, rbacCache, fetchPerm)
 	docsHandler := ui.NewDocsHandler(sessions)
 	setupHandler := ui.NewSetupHandler(store, sessions)
 
@@ -161,8 +163,10 @@ func runServe(args []string) error {
 		Dashboard:     server.RequireAuthMiddleware(sessions, dashboardHandler),
 		RepoDashboard: server.RequireAuthMiddleware(sessions, repoDashboardHandler),
 		Audit:         server.RequireAuthMiddleware(sessions, auditPageHandler),
-		Graph:         server.RequireAuthMiddleware(sessions, graphHandler),
-		Docs:          docsHandler,
+		Graph:           server.RequireAuthMiddleware(sessions, graphHandler),
+		GraphMitigation: server.RequireAuthMiddleware(sessions, graphMitigationHandler),
+		APIGraph:        server.RequireAuthMiddleware(sessions, apiGraphHandler),
+		Docs:            docsHandler,
 		Setup:         setupHandler,
 		Static:        ui.StaticHandler(),
 		OAuthStart:    http.HandlerFunc(oauthHandler.HandleStart),

@@ -31,6 +31,68 @@ type MitigationContext struct {
 	Slug string
 }
 
+// MitigationData is the structured output produced by GenerateMitigationData.
+// Use this when rendering inside the TASS web UI rather than in a PR comment,
+// so the caller can build proper HTML instead of rendering raw Markdown.
+type MitigationData struct {
+	// Heading is a short human-readable title, e.g. "Kubernetes NetworkPolicy — restrict egress".
+	Heading string
+	// Language is the code-fence language tag ("yaml", "json", "sql", or "" for generic).
+	Language string
+	// Snippet is the raw IaC/IAM code content without the surrounding fence markers.
+	Snippet string
+	// Ctx holds all template context fields (capability name, ID, location, etc.).
+	Ctx MitigationContext
+	// IsGeneric is true for categories that have no specific IaC template.
+	IsGeneric bool
+}
+
+// GenerateMitigationData returns structured MitigationData for the given violation.
+// This is the UI-facing counterpart to GenerateMitigation (which returns Markdown).
+// Output is deterministic and has no side effects.
+func GenerateMitigationData(v contract.Violation) MitigationData {
+	ctx := buildContext(v)
+	switch v.Capability.Category {
+	case contracts.CatNetworkAccess:
+		return MitigationData{
+			Heading:  "Kubernetes NetworkPolicy — restrict egress",
+			Language: "yaml",
+			Snippet:  render(templates.NetworkPolicy, ctx),
+			Ctx:      ctx,
+		}
+	case contracts.CatExternalAPI:
+		return MitigationData{
+			Heading:  "AWS IAM Policy — least-privilege external API access",
+			Language: "json",
+			Snippet:  render(templates.IAMPolicy, ctx),
+			Ctx:      ctx,
+		}
+	case contracts.CatDatabaseOp:
+		return MitigationData{
+			Heading:  "SQL Grant — least-privilege database access",
+			Language: "sql",
+			Snippet:  render(templates.SQLGrant, ctx),
+			Ctx:      ctx,
+		}
+	case contracts.CatFileSystem:
+		return MitigationData{
+			Heading:  "Kubernetes securityContext — read-only root filesystem",
+			Language: "yaml",
+			Snippet:  render(templates.ReadOnlyFS, ctx),
+			Ctx:      ctx,
+		}
+	case contracts.CatPrivilege:
+		return MitigationData{
+			Heading:  "Kubernetes securityContext — drop ALL Linux capabilities",
+			Language: "yaml",
+			Snippet:  render(templates.DropCaps, ctx),
+			Ctx:      ctx,
+		}
+	default:
+		return MitigationData{Ctx: ctx, IsGeneric: true}
+	}
+}
+
 // GenerateMitigation takes a single contract.Violation and returns a clean
 // Markdown string containing a category-specific IaC/IAM snippet that can
 // be posted directly into a GitHub PR comment.

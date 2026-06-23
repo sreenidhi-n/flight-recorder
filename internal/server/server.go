@@ -70,8 +70,10 @@ type Handlers struct {
 	Dashboard     http.Handler // GET  /dashboard
 	RepoDashboard http.Handler // GET  /dashboard/repo
 	Audit         http.Handler // GET  /audit/
-	Graph         http.Handler // GET  /graph (admin-only capability graph)
-	Docs          http.Handler // GET  /docs  (public onboarding page)
+	Graph           http.Handler // GET  /graph (admin-only capability graph)
+	GraphMitigation http.Handler // GET  /graph/mitigation (HTMX mitigation partial)
+	APIGraph        http.Handler // GET  /api/v1/graph (JSON capability graph)
+	Docs            http.Handler // GET  /docs  (public onboarding page)
 	Setup         http.Handler // GET  /setup
 	Static        http.Handler // GET  /static/
 	OAuthStart    http.Handler // GET  /auth/github
@@ -131,6 +133,7 @@ func BuildMux(h Handlers) *http.ServeMux {
 	mux.Handle("/api/policy", h.APIPolicy)
 	mux.Handle("/api/import", h.APIImport)
 	mux.Handle("/api/runtime-verify", RateLimitMiddleware(20, time.Minute, h.APIRuntimeVerify))
+	mux.Handle("/api/v1/graph", h.APIGraph)
 	mux.Handle("/compliance/", h.Compliance)
 
 	// Web UI pages (authenticated)
@@ -138,6 +141,7 @@ func BuildMux(h Handlers) *http.ServeMux {
 	mux.Handle("/dashboard/repo", h.RepoDashboard)
 	mux.Handle("/dashboard", h.Dashboard)
 	mux.Handle("/audit/", h.Audit)
+	mux.Handle("/graph/mitigation", h.GraphMitigation)
 	mux.Handle("/graph", h.Graph)
 	mux.Handle("/docs", h.Docs)
 	mux.Handle("/setup", h.Setup)

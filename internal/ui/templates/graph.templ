@@ -2,8 +2,11 @@ package templates
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
+
+	"github.com/tass-security/tass/internal/mitigation"
 	"github.com/tass-security/tass/internal/storage"
 )
 
@@ -22,18 +25,33 @@ type GraphPageData struct {
 	FilterSearch     string
 
 	Capabilities []storage.ConfirmedCapability
+
+	// Keyset pagination (Task 1)
+	HasMore        bool
+	NextCursorTime string // RFC3339 of last row's ConfirmedAt
+	NextCursorID   string // CapabilityID of last row
+	PageSize       int
+
+	// Column sort (Task 2)
+	SortBy  string // "", "repo", "capability", "category", "confirmed_at"
+	SortDir string // "asc" | "desc"
+
+	// View toggle (Task 5) — "table" (default) or "blast"
+	ViewMode     string
+	BlastRadius  BlastRadiusGraph
 }
 
-// csvQueryString serialises the current filter state as a URL query string so
-// the "Download CSV" link carries the same filters as the current view.
-func csvQueryString(d GraphPageData) string {
+// --- Query-string helpers ---
+
+// filterQS serialises the current filter + sort state as a URL query string,
+// excluding pagination cursors (those are added by callers that need them).
+func filterQS(d GraphPageData) string {
 	var parts []string
-	parts = append(parts, "format=csv")
 	for _, c := range d.FilterCategories {
-		parts = append(parts, "category="+c)
+		parts = append(parts, "category="+url.QueryEscape(c))
 	}
 	for _, r := range d.FilterRepos {
-		parts = append(parts, "repo="+r)
+		parts = append(parts, "repo="+url.QueryEscape(r))
 	}
 	if d.FilterFrom != "" {
 		parts = append(parts, "from="+d.FilterFrom)
@@ -42,18 +60,138 @@ func csvQueryString(d GraphPageData) string {
 		parts = append(parts, "to="+d.FilterTo)
 	}
 	if d.FilterBy != "" {
-		parts = append(parts, "by="+d.FilterBy)
+		parts = append(parts, "by="+url.QueryEscape(d.FilterBy))
 	}
 	if d.FilterSearch != "" {
-		parts = append(parts, "q="+d.FilterSearch)
+		parts = append(parts, "q="+url.QueryEscape(d.FilterSearch))
+	}
+	if d.SortBy != "" {
+		parts = append(parts, "sort_by="+d.SortBy)
+	}
+	if d.SortDir != "" {
+		parts = append(parts, "sort_dir="+d.SortDir)
+	}
+	if d.ViewMode != "" && d.ViewMode != "table" {
+		parts = append(parts, "view="+d.ViewMode)
 	}
 	return strings.Join(parts, "&")
 }
 
-func graphCatSelected(filterCats []string, cat string) bool {
-	if len(filterCats) == 0 {
-		return false
+// csvQueryString builds the query string for the CSV download link.
+func csvQueryString(d GraphPageData) string {
+	qs := filterQS(d)
+	if qs != "" {
+		return "format=csv&" + qs
 	}
+	return "format=csv"
+}
+
+// nextPageURL builds the HTMX URL for the infinite-scroll next page fetch.
+func nextPageURL(d GraphPageData) string {
+	base := filterQS(d)
+	cursor := "cursor_time=" + url.QueryEscape(d.NextCursorTime) +
+		"&cursor_id=" + url.QueryEscape(d.NextCursorID) +
+		"&append=1"
+	if base != "" {
+		return "/graph?" + base + "&" + cursor
+	}
+	return "/graph?" + cursor
+}
+
+// sortURL returns the /graph URL for clicking a column header, toggling direction
+// if the column is already the active sort.
+func sortURL(d GraphPageData, col string) string {
+	dir := "asc"
+	if d.SortBy == col && strings.ToLower(d.SortDir) == "asc" {
+		dir = "desc"
+	}
+	// Build a filter QS without the existing sort params
+	var parts []string
+	for _, c := range d.FilterCategories {
+		parts = append(parts, "category="+url.QueryEscape(c))
+	}
+	for _, r := range d.FilterRepos {
+		parts = append(parts, "repo="+url.QueryEscape(r))
+	}
+	if d.FilterFrom != "" {
+		parts = append(parts, "from="+d.FilterFrom)
+	}
+	if d.FilterTo != "" {
+		parts = append(parts, "to="+d.FilterTo)
+	}
+	if d.FilterBy != "" {
+		parts = append(parts, "by="+url.QueryEscape(d.FilterBy))
+	}
+	if d.FilterSearch != "" {
+		parts = append(parts, "q="+url.QueryEscape(d.FilterSearch))
+	}
+	parts = append(parts, "sort_by="+col, "sort_dir="+dir)
+	return "/graph?" + strings.Join(parts, "&")
+}
+
+// sortIcon returns the ↑/↓/↕ indicator for a column header.
+func sortIcon(d GraphPageData, col string) string {
+	if d.SortBy != col {
+		return "↕"
+	}
+	if strings.ToLower(d.SortDir) == "asc" {
+		return "↑"
+	}
+	return "↓"
+}
+
+// viewURL returns the /graph URL with a view= parameter change, preserving filters.
+func viewURL(d GraphPageData, view string) string {
+	var parts []string
+	for _, c := range d.FilterCategories {
+		parts = append(parts, "category="+url.QueryEscape(c))
+	}
+	for _, r := range d.FilterRepos {
+		parts = append(parts, "repo="+url.QueryEscape(r))
+	}
+	if d.FilterFrom != "" {
+		parts = append(parts, "from="+d.FilterFrom)
+	}
+	if d.FilterTo != "" {
+		parts = append(parts, "to="+d.FilterTo)
+	}
+	if d.FilterBy != "" {
+		parts = append(parts, "by="+url.QueryEscape(d.FilterBy))
+	}
+	if d.FilterSearch != "" {
+		parts = append(parts, "q="+url.QueryEscape(d.FilterSearch))
+	}
+	if d.SortBy != "" {
+		parts = append(parts, "sort_by="+d.SortBy)
+	}
+	if d.SortDir != "" {
+		parts = append(parts, "sort_dir="+d.SortDir)
+	}
+	if view != "table" {
+		parts = append(parts, "view="+view)
+	}
+	if len(parts) == 0 {
+		return "/graph"
+	}
+	return "/graph?" + strings.Join(parts, "&")
+}
+
+// mitURL builds the URL for the mitigation partial for a given capability row.
+// The row_id is embedded in the URL so the handler knows which DOM element to
+// target — this ensures the show/hide cycle always round-trips the same ID.
+func mitURL(cap storage.ConfirmedCapability, action string) string {
+	return "/graph/mitigation?action=" + action +
+		"&row_id=" + url.QueryEscape(MitRowID(cap.CapabilityID)) +
+		"&cap_id=" + url.QueryEscape(cap.CapabilityID) +
+		"&cap_name=" + url.QueryEscape(cap.Name) +
+		"&category=" + url.QueryEscape(cap.Category) +
+		"&location_file=" + url.QueryEscape(cap.LocationFile) +
+		"&evidence=" + url.QueryEscape(cap.Evidence)
+}
+
+// --- Display helpers ---
+
+func graphCatSelected(filterCats []string, cat string) bool {
 	for _, c := range filterCats {
 		if c == cat {
 			return true
@@ -114,6 +252,36 @@ func graphFormatTime(t time.Time) string {
 	return t.UTC().Format("Jan 2, 2006 15:04")
 }
 
+func pluralCap(n int) string {
+	if n == 1 {
+		return "capability"
+	}
+	return "capabilities"
+}
+
+func truncateEvidence(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if len(line) > 60 {
+			return line[:57] + "..."
+		}
+		return line
+	}
+	return s
+}
+
+func sortThStyle(d GraphPageData, col string) string {
+	if d.SortBy == col {
+		return "cursor:pointer;color:var(--fg);font-weight:700;white-space:nowrap"
+	}
+	return "cursor:pointer;color:var(--fg2);white-space:nowrap"
+}
+
+// --- Full page ---
+
 // Graph renders the full /graph page.
 templ Graph(d GraphPageData) {
 	@Page("Capability Graph", d.Login, d.Avatar) {
@@ -122,11 +290,36 @@ templ Graph(d GraphPageData) {
 				<h2>Capability Graph</h2>
 				<p><a href="/dashboard">← Dashboard</a> · All confirmed capabilities across every repository</p>
 			</div>
-			<a
-				href={ templ.SafeURL("/graph?" + csvQueryString(d)) }
-				class="btn"
-				style="padding:7px 16px;white-space:nowrap"
-			>Download CSV ↓</a>
+			<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+				// View toggle
+				<div style="display:flex;border:0.5px solid var(--border);border-radius:8px;overflow:hidden">
+					<button
+						hx-get={ viewURL(d, "table") }
+						hx-target="#graph-section"
+						hx-swap="outerHTML"
+						hx-push-url="true"
+						style={ "padding:6px 14px;font-size:12px;border:none;border-right:0.5px solid var(--border);cursor:pointer;" + func() string {
+							if d.ViewMode != "blast" { return "background:var(--primary);color:#fff;font-weight:600" }
+							return "background:var(--bg2);color:var(--fg2)"
+						}() }
+					>Table</button>
+					<button
+						hx-get={ viewURL(d, "blast") }
+						hx-target="#graph-section"
+						hx-swap="outerHTML"
+						hx-push-url="true"
+						style={ "padding:6px 14px;font-size:12px;border:none;cursor:pointer;" + func() string {
+							if d.ViewMode == "blast" { return "background:var(--primary);color:#fff;font-weight:600" }
+							return "background:var(--bg2);color:var(--fg2)"
+						}() }
+					>Blast Radius</button>
+				</div>
+				<a
+					href={ templ.SafeURL("/graph?" + csvQueryString(d)) }
+					class="btn"
+					style="padding:7px 16px;white-space:nowrap"
+				>Download CSV ↓</a>
+			</div>
 		</div>
 
 		// Filter panel
@@ -137,6 +330,17 @@ templ Graph(d GraphPageData) {
 			hx-push-url="true"
 			style="background:var(--bg2);border:0.5px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:24px"
 		>
+			// Preserve sort + view state across filter submits
+			if d.SortBy != "" {
+				<input type="hidden" name="sort_by" value={ d.SortBy }/>
+			}
+			if d.SortDir != "" {
+				<input type="hidden" name="sort_dir" value={ d.SortDir }/>
+			}
+			if d.ViewMode != "" && d.ViewMode != "table" {
+				<input type="hidden" name="view" value={ d.ViewMode }/>
+			}
+
 			<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:18px;align-items:start">
 				// Category checkboxes
 				<div>
@@ -225,58 +429,79 @@ templ Graph(d GraphPageData) {
 		</form>
 
 		<div id="graph-section">
-			@GraphTable(d)
+			if d.ViewMode == "blast" {
+				@BlastRadiusView(d)
+			} else {
+				@GraphTable(d)
+			}
 		</div>
 	}
 }
 
-// GraphTable is the swappable section returned by HTMX filter requests.
+// --- Table view (Task 1 + 2 + 3) ---
+
+// GraphTable is the swappable section returned by HTMX filter/sort requests.
 templ GraphTable(d GraphPageData) {
 	<div id="graph-section">
 		if len(d.Capabilities) == 0 {
 			<p style="color:var(--fg2);padding:24px 0">No confirmed capabilities match the current filters.</p>
 		} else {
 			<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-				<div class="section-title" style="margin-bottom:0">{ fmt.Sprintf("%d confirmed %s", len(d.Capabilities), pluralCap(len(d.Capabilities))) }</div>
+				<div class="section-title" style="margin-bottom:0">
+					{ fmt.Sprintf("%d confirmed %s", len(d.Capabilities), pluralCap(len(d.Capabilities))) }
+					if d.HasMore {
+						<span style="color:var(--fg2);font-weight:400;font-size:12px"> (scroll for more)</span>
+					}
+				</div>
 			</div>
 			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
-							<th>Repository</th>
-							<th>Capability</th>
-							<th>Category</th>
+							// Sortable headers (Task 2)
+							<th>
+								<span
+									hx-get={ sortURL(d, "repo") }
+									hx-target="#graph-section"
+									hx-swap="outerHTML"
+									hx-push-url="true"
+									style={ sortThStyle(d, "repo") }
+								>Repository { sortIcon(d, "repo") }</span>
+							</th>
+							<th>
+								<span
+									hx-get={ sortURL(d, "capability") }
+									hx-target="#graph-section"
+									hx-swap="outerHTML"
+									hx-push-url="true"
+									style={ sortThStyle(d, "capability") }
+								>Capability { sortIcon(d, "capability") }</span>
+							</th>
+							<th>
+								<span
+									hx-get={ sortURL(d, "category") }
+									hx-target="#graph-section"
+									hx-swap="outerHTML"
+									hx-push-url="true"
+									style={ sortThStyle(d, "category") }
+								>Category { sortIcon(d, "category") }</span>
+							</th>
 							<th>Endpoint / Identifier</th>
 							<th>Confirmed by</th>
-							<th>Confirmed at</th>
+							<th>
+								<span
+									hx-get={ sortURL(d, "confirmed_at") }
+									hx-target="#graph-section"
+									hx-swap="outerHTML"
+									hx-push-url="true"
+									style={ sortThStyle(d, "confirmed_at") }
+								>Confirmed at { sortIcon(d, "confirmed_at") }</span>
+							</th>
+							<th style="width:130px">Actions</th>
 						</tr>
 					</thead>
-					<tbody>
-						for _, cap := range d.Capabilities {
-							<tr>
-								<td>
-									<a href={ templ.SafeURL("/dashboard/repo?repo_id=" + fmt.Sprintf("%d", cap.RepoID)) }
-										style="font-family:var(--mono);font-size:12px">{ cap.RepoFullName }</a>
-								</td>
-								<td style="font-weight:500">{ cap.Name }</td>
-								<td>
-									<span class={ "cap-badge " + graphCapBadgeClass(cap.Category) }>
-										{ graphCapLabel(cap.Category) }
-									</span>
-								</td>
-								<td style="font-family:var(--mono);font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={ cap.Evidence }>
-									if cap.LocationFile != "" {
-										{ cap.LocationFile }
-									} else if cap.Evidence != "" {
-										{ truncateEvidence(cap.Evidence) }
-									} else {
-										<span style="color:var(--fg2)">—</span>
-									}
-								</td>
-								<td style="font-family:var(--mono);font-size:12px">{ "@" + cap.ConfirmedBy }</td>
-								<td style="white-space:nowrap;color:var(--fg2)">{ graphFormatTime(cap.ConfirmedAt) }</td>
-							</tr>
-						}
+					<tbody id="cap-tbody">
+						@GraphRowsBatch(d)
 					</tbody>
 				</table>
 			</div>
@@ -284,24 +509,206 @@ templ GraphTable(d GraphPageData) {
 	</div>
 }
 
-func pluralCap(n int) string {
-	if n == 1 {
-		return "capability"
+// GraphRowsBatch renders the <tr> rows for a page of capabilities, plus an
+// infinite-scroll sentinel row when there are more results (Task 1).
+// Returned alone (without a wrapping element) for HTMX append swaps.
+templ GraphRowsBatch(d GraphPageData) {
+	for _, cap := range d.Capabilities {
+		<tr>
+			<td>
+				<a href={ templ.SafeURL("/dashboard/repo?repo_id=" + fmt.Sprintf("%d", cap.RepoID)) }
+					style="font-family:var(--mono);font-size:12px">{ cap.RepoFullName }</a>
+			</td>
+			<td style="font-weight:500">{ cap.Name }</td>
+			<td>
+				<span class={ "cap-badge " + graphCapBadgeClass(cap.Category) }>
+					{ graphCapLabel(cap.Category) }
+				</span>
+			</td>
+			<td style="font-family:var(--mono);font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={ cap.Evidence }>
+				if cap.LocationFile != "" {
+					{ cap.LocationFile }
+				} else if cap.Evidence != "" {
+					{ truncateEvidence(cap.Evidence) }
+				} else {
+					<span style="color:var(--fg2)">—</span>
+				}
+			</td>
+			<td style="font-family:var(--mono);font-size:12px">{ "@" + cap.ConfirmedBy }</td>
+			<td style="white-space:nowrap;color:var(--fg2)">{ graphFormatTime(cap.ConfirmedAt) }</td>
+			// Mitigation button (Task 3) — div ID is derived from the capability ID, not
+			// the loop index, so it stays stable across paginated infinite-scroll appends.
+			<td>
+				<div id={ MitRowID(cap.CapabilityID) }>
+					<button
+						hx-get={ mitURL(cap, "show") }
+						hx-target={ "#" + MitRowID(cap.CapabilityID) }
+						hx-swap="innerHTML"
+						style="font-size:11px;padding:4px 10px;background:var(--bg2);border:0.5px solid var(--border);border-radius:6px;cursor:pointer;color:var(--fg);white-space:nowrap"
+					>⚡ Mitigate</button>
+				</div>
+			</td>
+		</tr>
 	}
-	return "capabilities"
+	// Infinite-scroll sentinel (Task 1) — replaces itself with the next batch
+	if d.HasMore {
+		<tr
+			hx-get={ nextPageURL(d) }
+			hx-trigger="revealed"
+			hx-target="this"
+			hx-swap="outerHTML"
+		>
+			<td colspan="7" style="text-align:center;padding:12px;color:var(--fg2);font-size:12px">
+				Loading more…
+			</td>
+		</tr>
+	}
 }
 
-func truncateEvidence(s string) string {
-	// Take first non-empty line, cap at 60 chars
-	for _, line := range strings.Split(s, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+// --- Mitigation partials (Task 3) ---
+
+// GraphMitigationCard renders the expanded mitigation card that replaces the
+// ⚡ Mitigate button.  The "Hide" button swaps it back to the original button.
+templ GraphMitigationCard(m mitigation.MitigationData, cap storage.ConfirmedCapability, rowID string) {
+	<div style="padding:10px 0">
+		if m.IsGeneric {
+			<div style="padding:10px;background:var(--bg2);border:0.5px solid var(--border);border-radius:8px;font-size:12px;color:var(--fg2)">
+				<strong style="color:var(--fg)">No IaC template for category <code>{ m.Ctx.Category }</code></strong><br/>
+				Review the capability manually and update <code>tass.contract.yaml</code> with an explicit allowed/forbidden rule.
+			</div>
+		} else {
+			<div style="background:var(--bg2);border:0.5px solid var(--border);border-radius:8px;overflow:hidden">
+				<div style="padding:8px 12px;border-bottom:0.5px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px">
+					<strong style="font-size:12px">{ m.Heading }</strong>
+					<span class={ "cap-badge " + graphCapBadgeClass(m.Ctx.Category) } style="font-size:10px">{ m.Language }</span>
+				</div>
+				<pre style="margin:0;padding:12px;font-size:11px;font-family:var(--mono);overflow-x:auto;line-height:1.6;background:var(--bg);border-bottom:0.5px solid var(--border)"><code>{ m.Snippet }</code></pre>
+				<div style="padding:6px 12px;font-size:11px;color:var(--fg2)">
+					⚠️ Generated starting point — review before applying to production.
+				</div>
+			</div>
 		}
-		if len(line) > 60 {
-			return line[:57] + "..."
+		<div style="margin-top:6px">
+			<button
+				hx-get={ mitURL(cap, "hide") }
+				hx-target={ "#" + rowID }
+				hx-swap="innerHTML"
+				style="font-size:11px;padding:3px 10px;background:transparent;border:0.5px solid var(--border);border-radius:6px;cursor:pointer;color:var(--fg2)"
+			>✕ Hide</button>
+		</div>
+	</div>
+}
+
+// GraphMitigationButton renders the original ⚡ Mitigate button — used by the
+// "hide" action to restore the cell after a card was shown.
+templ GraphMitigationButton(cap storage.ConfirmedCapability, rowID string) {
+	<button
+		hx-get={ mitURL(cap, "show") }
+		hx-target={ "#" + rowID }
+		hx-swap="innerHTML"
+		style="font-size:11px;padding:4px 10px;background:var(--bg2);border:0.5px solid var(--border);border-radius:6px;cursor:pointer;color:var(--fg);white-space:nowrap"
+	>⚡ Mitigate</button>
+}
+
+// --- Blast Radius SVG view (Task 5) ---
+
+// BlastRadiusView is the swappable section returned when view=blast.
+templ BlastRadiusView(d GraphPageData) {
+	<div id="graph-section">
+		<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+			<div>
+				<div class="section-title" style="margin-bottom:4px">Blast Radius</div>
+				<p style="font-size:12px;color:var(--fg2);margin:0">
+					Each line represents a confirmed capability shared between a repository (left) and an endpoint (right).
+					Line colour matches the capability category badge.
+				</p>
+			</div>
+		</div>
+		if d.BlastRadius.Empty {
+			<p style="color:var(--fg2);padding:24px 0">No confirmed capabilities match the current filters — nothing to visualise.</p>
+		} else {
+			<div style="background:var(--bg2);border:0.5px solid var(--border);border-radius:12px;padding:16px;overflow-x:auto">
+				// Inline SVG — all positions are server-computed (no JavaScript)
+				<svg
+					viewBox={ fmt.Sprintf("0 0 %d %d", d.BlastRadius.SVGWidth, d.BlastRadius.SVGHeight) }
+					width="100%"
+					style={ fmt.Sprintf("max-width:%dpx;display:block;margin:0 auto", d.BlastRadius.SVGWidth) }
+					xmlns="http://www.w3.org/2000/svg"
+				>
+					// Column header labels
+					<text x="80" y="16" text-anchor="middle" font-size="11" font-family="var(--mono)" fill="var(--fg2)" font-weight="600">Repositories</text>
+					<text x="670" y="16" text-anchor="middle" font-size="11" font-family="var(--mono)" fill="var(--fg2)" font-weight="600">Capabilities</text>
+
+					// Edges (rendered first so nodes appear on top)
+					for _, e := range d.BlastRadius.Edges {
+						<line
+							x1={ fmt.Sprintf("%d", e.X1) }
+							y1={ fmt.Sprintf("%d", e.Y1) }
+							x2={ fmt.Sprintf("%d", e.X2) }
+							y2={ fmt.Sprintf("%d", e.Y2) }
+							stroke={ e.Color }
+							stroke-width={ fmt.Sprintf("%d", e.Width) }
+							stroke-opacity="0.35"
+						/>
+					}
+
+					// Repo nodes (left column)
+					for _, n := range d.BlastRadius.RepoNodes {
+						<circle
+							cx={ fmt.Sprintf("%d", n.X) }
+							cy={ fmt.Sprintf("%d", n.Y) }
+							r="7"
+							fill="var(--fg2)"
+						/>
+						<text
+							x={ fmt.Sprintf("%d", n.X+14) }
+							y={ fmt.Sprintf("%d", n.Y+4) }
+							font-size="11"
+							font-family="var(--mono)"
+							fill="var(--fg)"
+						>{ n.Label }</text>
+						if n.Count > 0 {
+							<text
+								x={ fmt.Sprintf("%d", n.X) }
+								y={ fmt.Sprintf("%d", n.Y+4) }
+								text-anchor="middle"
+								font-size="8"
+								font-family="var(--mono)"
+								fill="var(--bg)"
+								font-weight="700"
+							>{ fmt.Sprintf("%d", n.Count) }</text>
+						}
+					}
+
+					// Cap nodes (right column)
+					for _, n := range d.BlastRadius.CapNodes {
+						<circle
+							cx={ fmt.Sprintf("%d", n.X) }
+							cy={ fmt.Sprintf("%d", n.Y) }
+							r="7"
+							fill={ n.Color }
+						/>
+						<text
+							x={ fmt.Sprintf("%d", n.X-14) }
+							y={ fmt.Sprintf("%d", n.Y+4) }
+							text-anchor="end"
+							font-size="11"
+							font-family="var(--mono)"
+							fill="var(--fg)"
+						>{ n.Label }</text>
+					}
+				</svg>
+
+				// Legend
+				<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:16px;padding-top:12px;border-top:0.5px solid var(--border)">
+					for _, cat := range []string{"external_dependency","network_access","database_operation","filesystem_operation","privilege_pattern","external_api"} {
+						<span style="display:flex;align-items:center;gap:4px;font-size:11px">
+							<span style={ "width:10px;height:10px;border-radius:50%;display:inline-block;background:" + categoryColor(cat) }></span>
+							{ graphCapLabel(cat) }
+						</span>
+					}
+				</div>
+			</div>
 		}
-		return line
-	}
-	return s
+	</div>
 }

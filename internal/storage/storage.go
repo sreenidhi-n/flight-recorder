@@ -272,6 +272,19 @@ type ConfirmedCapabilityFilter struct {
 	To          time.Time // zero = no upper bound on confirmed_at
 	ConfirmedBy string    // empty = all actors
 	Search      string    // free-text match against name + evidence (case-insensitive)
+
+	// Keyset pagination — ignored when PageSize == 0 (return all).
+	// CursorTime + CursorID must both be set to enable cursor-based next-page fetch.
+	// The caller gets the cursor values from the last row of the previous page.
+	PageSize   int       // results per page; 0 = unlimited (legacy)
+	CursorTime time.Time // decided_at of last row on previous page
+	CursorID   string    // capability_id of last row on previous page
+
+	// Column sort — safe allowlist enforced in resolveSort.
+	// Allowed values: "", "confirmed_at" (default), "repo", "capability", "category".
+	// Keyset cursor is disabled automatically for non-default sort columns.
+	SortBy  string // sort column key
+	SortDir string // "asc" | "desc"; default depends on column
 }
 
 // ConfirmedCapability is the result row for the cross-repo capability graph.
@@ -623,7 +636,10 @@ func (s *SQLiteStore) SaveDecision(ctx context.Context, d VerificationDecision) 
 			(id, scan_id, capability_id, decision, justification, decided_by, decided_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, d.ID, d.ScanID, d.CapabilityID, string(d.Decision),
-		d.Justification, d.DecidedBy, d.DecidedAt.UTC())
+		d.Justification, d.DecidedBy,
+		// Always store as RFC3339 string so lexicographic comparisons in the keyset
+		// cursor and date-range filters work correctly against the stored values.
+		d.DecidedAt.UTC().Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("storage: save decision %s: %w", d.ID, err)
 	}
@@ -1167,111 +1183,161 @@ func sortCanonicalKeys(v any) any {
 
 // --- Capability graph ---
 
+// resolveSort maps a caller-supplied sort key to a safe SQL column name and
+// normalised direction string. The column name is injected directly into the
+// query, so only the explicit allowlist is used — never raw user input.
+func resolveSort(sortBy, sortDir string) (col, dir string) {
+	dir = "DESC" // safe default
+	if strings.EqualFold(sortDir, "asc") {
+		dir = "ASC"
+	} else if strings.EqualFold(sortDir, "desc") {
+		dir = "DESC"
+	}
+	switch strings.ToLower(sortBy) {
+	case "repo":
+		return "repo_full_name", dir
+	case "capability":
+		return "cap_name", dir
+	case "category":
+		return "category", dir
+	default:
+		// confirmed_at: default to DESC (newest first) unless caller explicitly chose ASC
+		if sortDir == "" {
+			dir = "DESC"
+		}
+		return "decided_at", dir
+	}
+}
+
 // GetConfirmedCapabilities returns the current-state confirmed capabilities for an
-// installation: for each (repo, capabilityID) pair, the latest decision wins. If the
-// latest decision is "confirm" the capability is included; "revert" excludes it.
-// SQL WHERE clauses narrow by category and repo; date/user/search filters are applied in Go.
+// installation: for each (repo, capabilityID) pair the latest decision wins.
+// Only "confirm" decisions are included; "revert" decisions exclude the capability.
+//
+// The implementation uses a CTE with ROW_NUMBER() OVER (PARTITION BY repo_id, cap_id
+// ORDER BY decided_at DESC) so deduplication happens at the SQL layer instead of Go.
+// All filter, sort, and keyset-cursor predicates are pushed into the SQL query.
+//
+// Pagination contract:
+//   - When f.PageSize > 0 the query fetches PageSize+1 rows.
+//   - If the returned slice has length == PageSize+1 there is a next page.
+//   - The caller should strip the extra row and use the last kept row's
+//     ConfirmedAt / CapabilityID as the next CursorTime / CursorID.
 func (s *SQLiteStore) GetConfirmedCapabilities(ctx context.Context, installationID int64, f ConfirmedCapabilityFilter) ([]ConfirmedCapability, error) {
-	query := `
-		SELECT
-			r.full_name,
-			r.id,
-			json_extract(c.value, '$.id'),
-			COALESCE(json_extract(c.value, '$.name'), ''),
-			COALESCE(json_extract(c.value, '$.category'), ''),
-			COALESCE(json_extract(c.value, '$.raw_evidence'), ''),
-			COALESCE(json_extract(c.value, '$.location.file'), ''),
-			vd.decided_by,
-			vd.decided_at,
-			vd.decision
-		FROM verification_decisions vd
-		JOIN scan_results sr ON sr.id = vd.scan_id
-		JOIN repositories r ON r.id = sr.repo_id
-		JOIN json_each(sr.capabilities_json) c
-			ON json_extract(c.value, '$.id') = vd.capability_id
-		WHERE r.installation_id = ?`
+	// --- CTE: deduplicate by (repo, capability) using ROW_NUMBER ---
+	// Category and repo filters go inside the CTE so they run before the
+	// window function, keeping the intermediate result set small.
+	cte := `WITH latest AS (
+  SELECT
+    r.full_name                                            AS repo_full_name,
+    r.id                                                   AS repo_id,
+    json_extract(c.value, '$.id')                          AS cap_id,
+    COALESCE(json_extract(c.value, '$.name'), '')          AS cap_name,
+    COALESCE(json_extract(c.value, '$.category'), '')      AS category,
+    COALESCE(json_extract(c.value, '$.raw_evidence'), '')  AS evidence,
+    COALESCE(json_extract(c.value, '$.location.file'), '') AS location_file,
+    vd.decided_by,
+    vd.decided_at,
+    vd.decision,
+    ROW_NUMBER() OVER (
+      PARTITION BY r.id, json_extract(c.value, '$.id')
+      ORDER BY vd.decided_at DESC
+    ) AS rn
+  FROM verification_decisions vd
+  JOIN scan_results  sr ON sr.id = vd.scan_id
+  JOIN repositories  r  ON r.id  = sr.repo_id
+  JOIN json_each(sr.capabilities_json) c
+    ON json_extract(c.value, '$.id') = vd.capability_id
+  WHERE r.installation_id = ?`
 
 	args := []any{installationID}
 
 	if len(f.Categories) > 0 {
-		placeholders := make([]string, len(f.Categories))
+		ph := make([]string, len(f.Categories))
 		for i, cat := range f.Categories {
-			placeholders[i] = "?"
+			ph[i] = "?"
 			args = append(args, cat)
 		}
-		query += " AND json_extract(c.value, '$.category') IN (" + strings.Join(placeholders, ",") + ")"
+		cte += "\n  AND json_extract(c.value, '$.category') IN (" + strings.Join(ph, ",") + ")"
 	}
-
 	if len(f.RepoNames) > 0 {
-		placeholders := make([]string, len(f.RepoNames))
+		ph := make([]string, len(f.RepoNames))
 		for i, repo := range f.RepoNames {
-			placeholders[i] = "?"
+			ph[i] = "?"
 			args = append(args, repo)
 		}
-		query += " AND r.full_name IN (" + strings.Join(placeholders, ",") + ")"
+		cte += "\n  AND r.full_name IN (" + strings.Join(ph, ",") + ")"
+	}
+	cte += "\n)"
+
+	// --- Outer SELECT over the CTE ---
+	outer := `
+SELECT repo_full_name, repo_id, cap_id, cap_name, category, evidence, location_file, decided_by, decided_at
+FROM latest
+WHERE rn = 1
+  AND decision = 'confirm'`
+
+	// Date range filters (RFC3339 string comparison is correct for UTC timestamps)
+	if !f.From.IsZero() {
+		outer += "\n  AND decided_at >= ?"
+		args = append(args, f.From.UTC().Format(time.RFC3339))
+	}
+	if !f.To.IsZero() {
+		outer += "\n  AND decided_at <= ?"
+		args = append(args, f.To.UTC().Format(time.RFC3339))
+	}
+	// Confirmed-by filter
+	if f.ConfirmedBy != "" {
+		outer += "\n  AND LOWER(decided_by) = LOWER(?)"
+		args = append(args, f.ConfirmedBy)
+	}
+	// Free-text search
+	if f.Search != "" {
+		outer += "\n  AND (LOWER(cap_name) LIKE ? OR LOWER(evidence) LIKE ?)"
+		like := "%" + strings.ToLower(f.Search) + "%"
+		args = append(args, like, like)
+	}
+	// Keyset cursor — only applied for the default confirmed_at sort to ensure
+	// stable pagination semantics. Other sort columns fetch without a cursor.
+	sortCol, sortDir := resolveSort(f.SortBy, f.SortDir)
+	if !f.CursorTime.IsZero() && f.CursorID != "" && sortCol == "decided_at" {
+		cursorTS := f.CursorTime.UTC().Format(time.RFC3339)
+		if sortDir == "DESC" {
+			outer += "\n  AND (decided_at < ? OR (decided_at = ? AND cap_id > ?))"
+		} else {
+			outer += "\n  AND (decided_at > ? OR (decided_at = ? AND cap_id > ?))"
+		}
+		args = append(args, cursorTS, cursorTS, f.CursorID)
 	}
 
-	query += " ORDER BY vd.decided_at DESC"
+	// ORDER BY (column is from the safe allowlist, not raw user input)
+	outer += fmt.Sprintf("\nORDER BY %s %s, cap_id ASC", sortCol, sortDir)
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	// LIMIT — fetch one extra row to detect "has more" without a COUNT query
+	if f.PageSize > 0 {
+		outer += fmt.Sprintf("\nLIMIT %d", f.PageSize+1)
+	}
+
+	rows, err := s.db.QueryContext(ctx, cte+outer, args...)
 	if err != nil {
 		return nil, fmt.Errorf("storage: get confirmed capabilities: %w", err)
 	}
 	defer rows.Close()
 
-	// Dedup by (repoID, capID): first occurrence (latest decided_at) wins.
-	type key struct {
-		repoID int64
-		capID  string
-	}
-	seen := make(map[key]bool)
-	lc := strings.ToLower
-
 	var results []ConfirmedCapability
 	for rows.Next() {
 		var (
-			cap        ConfirmedCapability
-			decidedAt  string
-			decision   string
+			cap       ConfirmedCapability
+			decidedAt string
 		)
 		if err := rows.Scan(
 			&cap.RepoFullName, &cap.RepoID,
 			&cap.CapabilityID, &cap.Name, &cap.Category,
 			&cap.Evidence, &cap.LocationFile,
-			&cap.ConfirmedBy, &decidedAt, &decision,
+			&cap.ConfirmedBy, &decidedAt,
 		); err != nil {
 			return nil, fmt.Errorf("storage: scan confirmed capability row: %w", err)
 		}
 		cap.ConfirmedAt, _ = time.Parse(time.RFC3339, decidedAt)
-
-		k := key{cap.RepoID, cap.CapabilityID}
-		if seen[k] {
-			continue
-		}
-		seen[k] = true
-
-		// Latest decision was a revert — skip.
-		if decision != "confirm" {
-			continue
-		}
-
-		// Go-side filters: date range, confirmed by, free-text search.
-		if !f.From.IsZero() && cap.ConfirmedAt.Before(f.From) {
-			continue
-		}
-		if !f.To.IsZero() && cap.ConfirmedAt.After(f.To) {
-			continue
-		}
-		if f.ConfirmedBy != "" && cap.ConfirmedBy != f.ConfirmedBy {
-			continue
-		}
-		if f.Search != "" {
-			q := lc(f.Search)
-			if !strings.Contains(lc(cap.Name), q) && !strings.Contains(lc(cap.Evidence), q) {
-				continue
-			}
-		}
-
 		results = append(results, cap)
 	}
 	return results, rows.Err()

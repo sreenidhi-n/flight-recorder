@@ -5,6 +5,7 @@ package ui
 import (
 	"embed"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -15,7 +16,9 @@ import (
 
 	"github.com/a-h/templ"
 	"github.com/tass-security/tass/internal/auth"
+	"github.com/tass-security/tass/internal/contract"
 	gh "github.com/tass-security/tass/internal/github"
+	"github.com/tass-security/tass/internal/mitigation"
 	"github.com/tass-security/tass/internal/policy"
 	"github.com/tass-security/tass/internal/storage"
 	"github.com/tass-security/tass/internal/ui/templates"
@@ -623,7 +626,7 @@ func (h *GraphPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse filters from query params
+	// Parse filters, sort, view, and cursor from query params
 	q := r.URL.Query()
 	filterCats := q["category"]
 	filterRepos := q["repo"]
@@ -632,8 +635,19 @@ func (h *GraphPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	filterBy := q.Get("by")
 	filterSearch := q.Get("q")
 	format := q.Get("format")
+	sortBy := q.Get("sort_by")
+	sortDir := q.Get("sort_dir")
+	viewMode := q.Get("view")
+	if viewMode == "" {
+		viewMode = "table"
+	}
+	cursorTimeStr := q.Get("cursor_time")
+	cursorID := q.Get("cursor_id")
+	isAppend := q.Get("append") == "1"
 
-	var from, to time.Time
+	const pageSize = 50
+
+	var from, to, cursorTime time.Time
 	if filterFrom != "" {
 		if t, err := time.Parse("2006-01-02", filterFrom); err == nil {
 			from = t
@@ -644,6 +658,9 @@ func (h *GraphPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			to = t.Add(24*time.Hour - time.Second)
 		}
 	}
+	if cursorTimeStr != "" {
+		cursorTime, _ = time.Parse(time.RFC3339, cursorTimeStr)
+	}
 
 	filter := storage.ConfirmedCapabilityFilter{
 		Categories:  filterCats,
@@ -652,6 +669,18 @@ func (h *GraphPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		To:          to,
 		ConfirmedBy: filterBy,
 		Search:      filterSearch,
+		SortBy:      sortBy,
+		SortDir:     sortDir,
+		PageSize:     pageSize,
+		CursorTime:  cursorTime,
+		CursorID:    cursorID,
+	}
+
+	// For blast radius we need all caps (no pagination)
+	if viewMode == "blast" {
+		filter.PageSize = 0
+		filter.CursorTime = time.Time{}
+		filter.CursorID = ""
 	}
 
 	caps, err := h.store.GetConfirmedCapabilities(ctx, instID, filter)
@@ -660,26 +689,37 @@ func (h *GraphPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		caps = nil
 	}
 
-	// CSV export
+	// Detect "has more" — store returns pageSize+1 rows when there is a next page
+	hasMore := false
+	var nextCursorTime, nextCursorID string
+	if filter.PageSize > 0 && len(caps) > pageSize {
+		hasMore = true
+		caps = caps[:pageSize]
+		last := caps[len(caps)-1]
+		nextCursorTime = last.ConfirmedAt.UTC().Format(time.RFC3339)
+		nextCursorID = last.CapabilityID
+	}
+
+	// CSV export (uses untruncated caps — re-fetch without pagination)
 	if format == "csv" {
+		allCaps := caps
+		if hasMore {
+			allFilter := filter
+			allFilter.PageSize = 0
+			allFilter.CursorTime = time.Time{}
+			allFilter.CursorID = ""
+			allCaps, _ = h.store.GetConfirmedCapabilities(ctx, instID, allFilter)
+		}
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="tass-capabilities.csv"`)
 		enc := csv.NewWriter(w)
 		_ = enc.Write([]string{"repo", "capability", "category", "endpoint", "confirmed_by", "confirmed_at"})
-		for _, cap := range caps {
-			_ = enc.Write([]string{
-				cap.RepoFullName,
-				cap.Name,
-				cap.Category,
-				func() string {
-					if cap.LocationFile != "" {
-						return cap.LocationFile
-					}
-					return cap.Evidence
-				}(),
-				cap.ConfirmedBy,
-				cap.ConfirmedAt.UTC().Format(time.RFC3339),
-			})
+		for _, c := range allCaps {
+			endpoint := c.Evidence
+			if c.LocationFile != "" {
+				endpoint = c.LocationFile
+			}
+			_ = enc.Write([]string{c.RepoFullName, c.Name, c.Category, endpoint, c.ConfirmedBy, c.ConfirmedAt.UTC().Format(time.RFC3339)})
 		}
 		enc.Flush()
 		return
@@ -698,13 +738,214 @@ func (h *GraphPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		FilterBy:         filterBy,
 		FilterSearch:     filterSearch,
 		Capabilities:     caps,
+		HasMore:          hasMore,
+		NextCursorTime:   nextCursorTime,
+		NextCursorID:     nextCursorID,
+		PageSize:         pageSize,
+		SortBy:           sortBy,
+		SortDir:          sortDir,
+		ViewMode:         viewMode,
 	}
 
-	if r.Header.Get("HX-Request") == "true" {
+	// Pre-compute blast radius when the view is active
+	if viewMode == "blast" {
+		data.BlastRadius = templates.BuildBlastRadius(caps)
+	}
+
+	isHX := r.Header.Get("HX-Request") == "true"
+
+	switch {
+	case isHX && isAppend:
+		// Infinite-scroll next page: return <tr> rows only (no wrapper)
+		render(w, r, http.StatusOK, templates.GraphRowsBatch(data))
+	case isHX && viewMode == "blast":
+		render(w, r, http.StatusOK, templates.BlastRadiusView(data))
+	case isHX:
 		render(w, r, http.StatusOK, templates.GraphTable(data))
+	default:
+		render(w, r, http.StatusOK, templates.Graph(data))
+	}
+}
+
+// --- GraphMitigationHandler (Task 3) ---
+
+// GraphMitigationHandler serves GET /graph/mitigation — returns an inline
+// mitigation card (action=show) or just the trigger button (action=hide).
+type GraphMitigationHandler struct {
+	sessions *auth.SessionStore
+}
+
+func NewGraphMitigationHandler(sessions *auth.SessionStore) *GraphMitigationHandler {
+	return &GraphMitigationHandler{sessions: sessions}
+}
+
+func (h *GraphMitigationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	sess := auth.SessionFrom(r)
+	if sess == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	render(w, r, http.StatusOK, templates.Graph(data))
+
+	q := r.URL.Query()
+	action := q.Get("action")
+	// row_id is stamped into the URL by mitURL() in graph.templ — it matches the
+	// <div id="…"> in the table row, ensuring the HTMX swap targets the right cell.
+	rowID := q.Get("row_id")
+	if rowID == "" {
+		rowID = templates.MitRowID(q.Get("cap_id")) // fallback for direct API calls
+	}
+
+	cap := storage.ConfirmedCapability{
+		CapabilityID: q.Get("cap_id"),
+		Name:         q.Get("cap_name"),
+		Category:     q.Get("category"),
+		LocationFile: q.Get("location_file"),
+		Evidence:     q.Get("evidence"),
+	}
+
+	if action == "hide" {
+		render(w, r, http.StatusOK, templates.GraphMitigationButton(cap, rowID))
+		return
+	}
+
+	// Build a synthetic contract.Violation for the mitigation generator.
+	v := contract.Violation{
+		Rule:   contract.RuleNotInAllowed,
+		Reason: "capability confirmed via TASS — auto-mitigation requested",
+		Capability: contracts.Capability{
+			ID:   cap.CapabilityID,
+			Name: cap.Name,
+			Category: contracts.CapCategory(cap.Category),
+			Location: contracts.CodeLocation{File: cap.LocationFile},
+			RawEvidence: cap.Evidence,
+		},
+	}
+	mit := mitigation.GenerateMitigationData(v)
+	render(w, r, http.StatusOK, templates.GraphMitigationCard(mit, cap, rowID))
+}
+
+// --- ApiGraphHandler (Task 4) ---
+
+// ApiGraphHandler serves GET /api/v1/graph — JSON representation of the
+// capability graph, identical filter surface to the UI page.
+type ApiGraphHandler struct {
+	store     storage.Store
+	sessions  *auth.SessionStore
+	rbacCache *auth.PermCache
+	fetchPerm auth.PermFetcher
+}
+
+func NewApiGraphHandler(store storage.Store, sessions *auth.SessionStore, rbacCache *auth.PermCache, fetchPerm auth.PermFetcher) *ApiGraphHandler {
+	return &ApiGraphHandler{store: store, sessions: sessions, rbacCache: rbacCache, fetchPerm: fetchPerm}
+}
+
+// apiGraphResponse is the JSON envelope for GET /api/v1/graph.
+type apiGraphResponse struct {
+	Capabilities   []storage.ConfirmedCapability `json:"capabilities"`
+	NextCursorTime string                        `json:"next_cursor_time,omitempty"`
+	NextCursorID   string                        `json:"next_cursor_id,omitempty"`
+	HasMore        bool                          `json:"has_more"`
+	Total          int                           `json:"total"`
+}
+
+func (h *ApiGraphHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	sess := auth.SessionFrom(r)
+	if sess == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	ctx := r.Context()
+
+	// Resolve installation
+	instIDStr := r.URL.Query().Get("installation_id")
+	var instID int64
+	if instIDStr != "" {
+		instID, _ = strconv.ParseInt(instIDStr, 10, 64)
+	}
+	if instID == 0 {
+		inst, _ := h.store.GetInstallationByLogin(ctx, sess.GitHubLogin)
+		if inst != nil {
+			instID = inst.ID
+		}
+	}
+
+	// RBAC: Admin required (same as UI)
+	if h.rbacCache != nil && h.fetchPerm != nil && instID > 0 {
+		repos, err := h.store.ListRepositoriesByInstallation(ctx, instID)
+		if err != nil || len(repos) == 0 {
+			http.Error(w, `{"error":"no repositories found"}`, http.StatusForbidden)
+			return
+		}
+		names := make([]string, len(repos))
+		for i := range repos {
+			names[i] = repos[i].FullName
+		}
+		ok, _ := auth.HasMinRoleOnAnyRepo(ctx, sess.GitHubLogin, sess.AccessToken, names, auth.RoleAdmin, h.rbacCache, h.fetchPerm)
+		if !ok {
+			http.Error(w, `{"error":"admin role required"}`, http.StatusForbidden)
+			return
+		}
+	}
+
+	q := r.URL.Query()
+	filterCats := q["category"]
+	filterRepos := q["repo"]
+	sortBy := q.Get("sort_by")
+	sortDir := q.Get("sort_dir")
+	cursorTimeStr := q.Get("cursor_time")
+	cursorID := q.Get("cursor_id")
+
+	const pageSize = 50
+
+	var from, to, cursorTime time.Time
+	if s := q.Get("from"); s != "" {
+		if t, err := time.Parse("2006-01-02", s); err == nil {
+			from = t
+		}
+	}
+	if s := q.Get("to"); s != "" {
+		if t, err := time.Parse("2006-01-02", s); err == nil {
+			to = t.Add(24*time.Hour - time.Second)
+		}
+	}
+	if cursorTimeStr != "" {
+		cursorTime, _ = time.Parse(time.RFC3339, cursorTimeStr)
+	}
+
+	filter := storage.ConfirmedCapabilityFilter{
+		Categories:  filterCats,
+		RepoNames:   filterRepos,
+		From:        from,
+		To:          to,
+		ConfirmedBy: q.Get("by"),
+		Search:      q.Get("q"),
+		SortBy:      sortBy,
+		SortDir:     sortDir,
+		PageSize:     pageSize,
+		CursorTime:  cursorTime,
+		CursorID:    cursorID,
+	}
+
+	caps, err := h.store.GetConfirmedCapabilities(ctx, instID, filter)
+	if err != nil {
+		slog.Error("api/graph: get confirmed capabilities", "error", err)
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	resp := apiGraphResponse{Total: len(caps)}
+	if len(caps) > pageSize {
+		resp.HasMore = true
+		caps = caps[:pageSize]
+		last := caps[len(caps)-1]
+		resp.NextCursorTime = last.ConfirmedAt.UTC().Format(time.RFC3339)
+		resp.NextCursorID = last.CapabilityID
+	}
+	resp.Total = len(caps)
+	resp.Capabilities = caps
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func fromRFC3339(t time.Time) string {
