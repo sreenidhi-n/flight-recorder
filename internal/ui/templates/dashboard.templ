@@ -34,14 +34,21 @@ templ Dashboard(d DashboardData) {
 				<h2>Dashboard</h2>
 				<p>{ d.OrgName } · capability tracking overview</p>
 			</div>
-			if d.AppInstallURL != "" {
-				<a href={ templ.SafeURL(d.AppInstallURL) }
-					target="_blank" rel="noopener"
-					class="btn btn-primary"
+			<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+				<a href="/graph"
+					class="btn"
 					style="font-size:13px;padding:6px 16px;white-space:nowrap">
-					+ Add repos
+					Capability Graph ↗
 				</a>
-			}
+				if d.AppInstallURL != "" {
+					<a href={ templ.SafeURL(d.AppInstallURL) }
+						target="_blank" rel="noopener"
+						class="btn btn-primary"
+						style="font-size:13px;padding:6px 16px;white-space:nowrap">
+						+ Add repos
+					</a>
+				}
+			</div>
 		</div>
 
 		if d.Stats != nil {
@@ -170,9 +177,12 @@ templ Dashboard(d DashboardData) {
 								<td>{ fmt.Sprintf("%d", row.TotalCaps) }</td>
 								<td>{ fmt.Sprintf("%d", row.ConfirmCount) }</td>
 								<td>{ fmt.Sprintf("%d", row.RevertCount) }</td>
-								<td>
+								<td style="display:flex;gap:12px;align-items:center">
 									<a href={ templ.SafeURL(fmt.Sprintf("/audit/%d", row.RepoID)) } style="font-size:12px">
 										Audit →
+									</a>
+									<a href={ templ.SafeURL(fmt.Sprintf("/compliance/%s?framework=all", row.FullName)) } style="font-size:12px;color:var(--purple)">
+										Compliance ↗
 									</a>
 								</td>
 							</tr>
@@ -199,9 +209,21 @@ templ scanStatusPill(status storage.ScanStatus) {
 // RepoDashboard renders the per-repo drill-down page.
 templ RepoDashboard(login, avatar, repoName string, stats *storage.RepoStats, repoID int64, netpolYAML, iamJSON string) {
 	@Page(repoName+" — Repo", login, avatar) {
-		<div class="page-header">
-			<h2>{ repoName }</h2>
-			<p><a href="/dashboard">← Dashboard</a></p>
+		<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+			<div>
+				<h2>{ repoName }</h2>
+				<p><a href="/dashboard">← Dashboard</a></p>
+			</div>
+			<div style="display:flex;gap:8px;align-items:center">
+				<a href={ templ.SafeURL(fmt.Sprintf("/audit/%d", repoID)) }
+					style="font-size:13px;padding:6px 14px;border:1px solid var(--border);border-radius:6px;color:var(--fg);text-decoration:none">
+					Audit →
+				</a>
+				<a href={ templ.SafeURL(fmt.Sprintf("/compliance/%s?framework=all", repoName)) }
+					style="font-size:13px;padding:6px 14px;border:1px solid var(--purple);border-radius:6px;color:var(--purple);text-decoration:none">
+					Compliance ↗
+				</a>
+			</div>
 		</div>
 
 		if stats != nil {

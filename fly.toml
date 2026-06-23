@@ -1,30 +1,32 @@
-# fly.toml — TASS on Fly.io
-# Deploy: fly deploy
+# fly.toml app configuration file generated for tass-security on 2026-04-20T17:27:35+05:30
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app    = "tass-test"
-primary_region = "ord"
+app = 'tass-test'
+primary_region = 'iad'
 
 [build]
 
 [env]
-  TASS_BASE_URL = "https://tass-test.fly.dev"
+  TASS_BASE_URL = 'https://tass-test.fly.dev'
 
-[mounts]
-  source      = "tass_data"
-  destination = "/data"
+[[mounts]]
+  source = 'tass_data'
+  destination = '/data'
 
 [http_service]
-  internal_port       = 8080
-  force_https         = true
-  auto_stop_machines  = "off"
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
 
   [http_service.concurrency]
-    type       = "connections"
+    type = 'connections'
     hard_limit = 200
     soft_limit = 150
 
 [[vm]]
-  size   = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'

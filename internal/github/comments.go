@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tass-security/tass/internal/contract"
 	"github.com/tass-security/tass/pkg/contracts"
 )
 
@@ -74,52 +75,106 @@ func (a *App) findTASSComment(ctx context.Context, token, owner, repo string, pr
 }
 
 // RenderComment builds the Markdown body for a PR comment.
-func RenderComment(scanID string, novelCaps []contracts.Capability, baseURL string) string {
+// violations are contract hard-blocks rendered above the regular capability table.
+// An optional AISignal may be passed as the last argument; when IsAIGenerated is
+// true a warning badge is injected at the top of the comment.
+func RenderComment(scanID string, novelCaps []contracts.Capability, violations []contract.Violation, baseURL string, ai ...AISignal) string {
 	var b strings.Builder
 
-	if len(novelCaps) == 0 {
+	// --- AI-generated code badge (injected first, before all other sections) ---
+	var aiSig AISignal
+	if len(ai) > 0 {
+		aiSig = ai[0]
+	}
+	if aiSig.IsAIGenerated {
+		fmt.Fprintf(&b, "> 🤖 **AI-Generated Code Detected: Stricter capability review applied.**\n")
+		if len(aiSig.Signals) > 0 {
+			for _, s := range aiSig.Signals {
+				fmt.Fprintf(&b, "> - %s\n", s)
+			}
+		}
+		fmt.Fprintf(&b, "\n")
+	}
+
+	// --- Contract violations section (hard blocks) ---
+	if len(violations) > 0 {
+		fmt.Fprintf(&b, "## 🚫 TASS — Contract Violations\n\n")
+		fmt.Fprintf(&b, "> **These capabilities are hard-blocked by `tass.contract.yaml`.**\n")
+		fmt.Fprintf(&b, "> They cannot be resolved via `/tass confirm`. Edit `tass.contract.yaml` to allow them, or remove the offending code.\n\n")
+
+		fmt.Fprintf(&b, "| Rule | Capability | Reason |\n")
+		fmt.Fprintf(&b, "|------|------------|--------|\n")
+		for _, v := range violations {
+			capName := v.Reason
+			if v.Capability.Name != "" {
+				capName = v.Capability.Name
+			}
+			fmt.Fprintf(&b, "| `%s` | %s %s | %s |\n",
+				v.Rule,
+				categoryEmoji(v.Capability.Category),
+				capName,
+				v.Reason,
+			)
+		}
+		fmt.Fprintf(&b, "\n")
+	}
+
+	// --- Regular capabilities section ---
+	// Count non-violated novel caps (those that need human review)
+	var reviewableCaps []contracts.Capability
+	for _, cap := range novelCaps {
+		if !cap.ContractViolated {
+			reviewableCaps = append(reviewableCaps, cap)
+		}
+	}
+
+	if len(novelCaps) == 0 && len(violations) == 0 {
 		fmt.Fprintf(&b, "## TASS — No New Capabilities Detected\n\n")
 		fmt.Fprintf(&b, "TASS scanned this PR and found no new capabilities. All clear!\n\n")
 		fmt.Fprintf(&b, "%s%s -->\n", tassMarkerPrefix, scanID)
 		return b.String()
 	}
 
-	plural := "Capability"
-	if len(novelCaps) != 1 {
-		plural = "Capabilities"
-	}
-
-	fmt.Fprintf(&b, "## TASS — %d New %s Detected\n\n", len(novelCaps), plural)
-	fmt.Fprintf(&b, "| # | Capability | Category | Detected In | Layer |\n")
-	fmt.Fprintf(&b, "|---|------------|----------|-------------|-------|\n")
-
-	for i, cap := range novelCaps {
-		location := cap.Location.File
-		if cap.Location.Line > 0 {
-			location = fmt.Sprintf("%s:%d", cap.Location.File, cap.Location.Line)
+	if len(reviewableCaps) > 0 {
+		noun := "Capability Needs"
+		if len(reviewableCaps) != 1 {
+			noun = "Capabilities Need"
 		}
-		if location == "" {
-			location = "—"
+		fmt.Fprintf(&b, "## 🔍 TASS — %d New %s Review\n\n", len(reviewableCaps), noun)
+		fmt.Fprintf(&b, "> ⛔ **This PR is blocked.** All capabilities must be reviewed on TASS before this branch can merge.\n\n")
+		fmt.Fprintf(&b, "| # | Capability | Category | Detected In | Layer |\n")
+		fmt.Fprintf(&b, "|---|------------|----------|-------------|-------|\n")
+
+		for i, cap := range reviewableCaps {
+			location := cap.Location.File
+			if cap.Location.Line > 0 {
+				location = fmt.Sprintf("%s:%d", cap.Location.File, cap.Location.Line)
+			}
+			if location == "" {
+				location = "—"
+			}
+			fmt.Fprintf(&b, "| %d | %s | %s %s | `%s` | %s |\n",
+				i+1,
+				cap.Name,
+				categoryEmoji(cap.Category),
+				formatCategory(cap.Category),
+				location,
+				formatLayer(cap.Source),
+			)
 		}
 
-		fmt.Fprintf(&b, "| %d | %s | %s %s | `%s` | %s |\n",
-			i+1,
-			cap.Name,
-			categoryEmoji(cap.Category),
-			formatCategory(cap.Category),
-			location,
-			formatLayer(cap.Source),
-		)
+		fmt.Fprintf(&b, "\n**[Review & Verify on TASS](%s/verify/%s)**\n\n", baseURL, scanID)
+
+		fmt.Fprintf(&b, "<details>\n")
+		fmt.Fprintf(&b, "<summary>What is this?</summary>\n\n")
+		fmt.Fprintf(&b, "TASS scans PRs for newly introduced capabilities — things your code\n")
+		fmt.Fprintf(&b, "can now DO that it couldn't before. Confirm what you intended,\n")
+		fmt.Fprintf(&b, "revert what you didn't.\n")
+		fmt.Fprintf(&b, "</details>\n\n")
+	} else if len(violations) > 0 {
+		// Only violations, no reviewable caps
+		fmt.Fprintf(&b, "Resolve the contract violations above to unblock this PR.\n\n")
 	}
-
-	fmt.Fprintf(&b, "\n**[Review & Verify on TASS](%s/verify/%s)**\n\n", baseURL, scanID)
-
-	fmt.Fprintf(&b, "<details>\n")
-	fmt.Fprintf(&b, "<summary>What is this?</summary>\n\n")
-	fmt.Fprintf(&b, "TASS scans PRs for newly introduced capabilities — things your code\n")
-	fmt.Fprintf(&b, "can now DO that it couldn't before. Confirm what you intended,\n")
-	fmt.Fprintf(&b, "revert what you didn't.\n")
-	fmt.Fprintf(&b, "</details>\n\n")
 
 	fmt.Fprintf(&b, "%s%s -->\n", tassMarkerPrefix, scanID)
 	return b.String()

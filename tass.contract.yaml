@@ -1,0 +1,24 @@
+version: 1
+service: tass-security
+
+# Capabilities this service is explicitly ALLOWED to have.
+# Any capability in a listed category must match at least one pattern here.
+# Categories not listed are unrestricted.
+allowed:
+  network_access:
+    - "*.fly.dev"
+    - "api.github.com"
+    - "github.com"
+    - "*.github.com"
+
+# These categories are unconditionally forbidden.
+# Violations are hard blocks — they cannot be confirmed via /tass confirm.
+forbidden:
+  # TASS itself should never shell out to subprocesses at runtime.
+  privilege_pattern:
+    - "*"
+
+# Maximum number of novel capabilities per category per PR.
+limits:
+  external_api: 5
+  external_dependency: 10

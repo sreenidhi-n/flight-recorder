@@ -63,7 +63,8 @@ func (s *Scanner) ScanRepo(repoRoot string) (*contracts.CapabilitySet, error) {
 		ignore = tassignore.LoadBytes(nil)
 	}
 
-	seen := make(map[string]struct{})
+	// byID maps capability ID → index in caps for cross-file location merging.
+	byID := make(map[string]int)
 	var caps []contracts.Capability
 
 	// --- Layer 0: dependency files ---
@@ -75,7 +76,8 @@ func (s *Scanner) ScanRepo(repoRoot string) (*contracts.CapabilitySet, error) {
 		if ignore.ShouldIgnore(c.Location.File) {
 			continue
 		}
-		seen[c.ID] = struct{}{}
+		initLocations(&c)
+		byID[c.ID] = len(caps)
 		caps = append(caps, c)
 	}
 
@@ -86,9 +88,12 @@ func (s *Scanner) ScanRepo(repoRoot string) (*contracts.CapabilitySet, error) {
 			return nil, fmt.Errorf("scanner.ScanRepo: layer1: %w", err)
 		}
 		for _, c := range l1caps {
-			// Layer 0 wins on ID collision.
-			if _, dup := seen[c.ID]; !dup {
-				seen[c.ID] = struct{}{}
+			if idx, dup := byID[c.ID]; dup {
+				// Layer 0 wins; for Layer 1 duplicates, merge the additional location.
+				caps[idx].Locations = appendLocation(caps[idx].Locations, c.Location)
+			} else {
+				initLocations(&c)
+				byID[c.ID] = len(caps)
 				caps = append(caps, c)
 			}
 		}
@@ -129,7 +134,8 @@ func (s *Scanner) ScanDiff(repoRoot, baseBranch string) (*contracts.CapabilitySe
 		}, nil
 	}
 
-	seen := make(map[string]struct{})
+	// byID maps capability ID → index in caps for cross-file location merging.
+	byID := make(map[string]int)
 	var caps []contracts.Capability
 
 	// --- Layer 0: diff changed dependency files ---
@@ -166,9 +172,12 @@ func (s *Scanner) ScanDiff(repoRoot, baseBranch string) (*contracts.CapabilitySe
 		}
 
 		for _, c := range added {
-			if _, dup := seen[c.ID]; !dup {
-				seen[c.ID] = struct{}{}
-				c.Location.File = relFile
+			c.Location.File = relFile
+			if idx, dup := byID[c.ID]; dup {
+				caps[idx].Locations = appendLocation(caps[idx].Locations, c.Location)
+			} else {
+				initLocations(&c)
+				byID[c.ID] = len(caps)
 				caps = append(caps, c)
 			}
 		}
@@ -200,8 +209,11 @@ func (s *Scanner) ScanDiff(repoRoot, baseBranch string) (*contracts.CapabilitySe
 			}
 
 			for _, c := range fileCaps {
-				if _, dup := seen[c.ID]; !dup {
-					seen[c.ID] = struct{}{}
+				if idx, dup := byID[c.ID]; dup {
+					caps[idx].Locations = appendLocation(caps[idx].Locations, c.Location)
+				} else {
+					initLocations(&c)
+					byID[c.ID] = len(caps)
 					caps = append(caps, c)
 				}
 			}
@@ -243,7 +255,8 @@ func (s *Scanner) ScanRemote(headFiles, baseDeps map[string][]byte, ignoreConten
 		ignore = tassignore.LoadBytes(nil)
 	}
 
-	seen := make(map[string]struct{})
+	// byID maps capability ID → index in caps for cross-file location merging.
+	byID := make(map[string]int)
 	var caps []contracts.Capability
 
 	// --- Layer 0: dependency file diffing ---
@@ -268,9 +281,12 @@ func (s *Scanner) ScanRemote(headFiles, baseDeps map[string][]byte, ignoreConten
 		}
 
 		for _, c := range added {
-			if _, dup := seen[c.ID]; !dup {
-				seen[c.ID] = struct{}{}
-				c.Location.File = path
+			c.Location.File = path
+			if idx, dup := byID[c.ID]; dup {
+				caps[idx].Locations = appendLocation(caps[idx].Locations, c.Location)
+			} else {
+				initLocations(&c)
+				byID[c.ID] = len(caps)
 				caps = append(caps, c)
 			}
 		}
@@ -295,8 +311,11 @@ func (s *Scanner) ScanRemote(headFiles, baseDeps map[string][]byte, ignoreConten
 			}
 
 			for _, c := range fileCaps {
-				if _, dup := seen[c.ID]; !dup {
-					seen[c.ID] = struct{}{}
+				if idx, dup := byID[c.ID]; dup {
+					caps[idx].Locations = appendLocation(caps[idx].Locations, c.Location)
+				} else {
+					initLocations(&c)
+					byID[c.ID] = len(caps)
 					caps = append(caps, c)
 				}
 			}
@@ -356,10 +375,12 @@ func (s *Scanner) scanRepoDeps(repoRoot string) ([]contracts.Capability, error) 
 }
 
 // scanRepoAST walks repoRoot and AST-scans all known source files (Layer 1).
-// Files matched by the ignore matcher are skipped.
+// Files matched by the ignore matcher are skipped. Cross-file duplicates are
+// merged: subsequent files with the same cap ID append their location instead
+// of being dropped (BP-3 fix).
 func (s *Scanner) scanRepoAST(repoRoot string, ignore *tassignore.Matcher) ([]contracts.Capability, error) {
 	var caps []contracts.Capability
-	seen := make(map[string]struct{})
+	byID := make(map[string]int)
 
 	err := filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -396,8 +417,11 @@ func (s *Scanner) scanRepoAST(repoRoot string, ignore *tassignore.Matcher) ([]co
 		}
 
 		for _, c := range fileCaps {
-			if _, dup := seen[c.ID]; !dup {
-				seen[c.ID] = struct{}{}
+			if idx, dup := byID[c.ID]; dup {
+				caps[idx].Locations = appendLocation(caps[idx].Locations, c.Location)
+			} else {
+				initLocations(&c)
+				byID[c.ID] = len(caps)
 				caps = append(caps, c)
 			}
 		}
@@ -405,6 +429,25 @@ func (s *Scanner) scanRepoAST(repoRoot string, ignore *tassignore.Matcher) ([]co
 	})
 
 	return caps, err
+}
+
+// appendLocation adds loc to the locations slice if it is not already present.
+func appendLocation(locs []contracts.CodeLocation, loc contracts.CodeLocation) []contracts.CodeLocation {
+	for _, existing := range locs {
+		if existing.File == loc.File && existing.Line == loc.Line {
+			return locs
+		}
+	}
+	return append(locs, loc)
+}
+
+// initLocations ensures a capability has its Locations slice seeded with its
+// primary Location before being stored. This is required so that subsequent
+// cross-file merges via appendLocation always accumulate all call sites.
+func initLocations(c *contracts.Capability) {
+	if len(c.Locations) == 0 && (c.Location.File != "" || c.Location.Line != 0) {
+		c.Locations = []contracts.CodeLocation{c.Location}
+	}
 }
 
 // gitChangedFiles returns the list of files changed between baseBranch and HEAD

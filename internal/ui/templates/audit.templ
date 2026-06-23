@@ -20,12 +20,20 @@ type AuditPageData struct {
 // Audit renders the /audit/{repo_id} timeline page.
 templ Audit(d AuditPageData) {
 	@Page(d.RepoName+" — Audit", d.Login, d.Avatar) {
-		<div class="page-header">
-			<h2>Audit Trail</h2>
-			<p>
-				<a href="/dashboard">← Dashboard</a>
-				· { d.RepoName }
-			</p>
+		<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+			<div>
+				<h2>Audit Trail</h2>
+				<p>
+					<a href="/dashboard">← Dashboard</a>
+					· { d.RepoName }
+				</p>
+			</div>
+			if d.RepoName != "" {
+				<a href={ templ.SafeURL(fmt.Sprintf("/compliance/%s?framework=all", d.RepoName)) }
+					style="font-size:13px;padding:6px 14px;border:1px solid var(--purple);border-radius:6px;color:var(--purple);text-decoration:none;white-space:nowrap">
+					Compliance report ↗
+				</a>
+			}
 		</div>
 
 		<div style="display:flex;align-items:flex-end;gap:16px;margin-bottom:24px;flex-wrap:wrap">

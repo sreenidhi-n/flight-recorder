@@ -58,6 +58,7 @@ type Store interface {
 	GetStats(ctx context.Context, repoID int64) (*RepoStats, error)
 	GetStatsByInstallation(ctx context.Context, installationID int64) (*InstallationStats, error)
 	GetRecentScans(ctx context.Context, installationID int64, limit int) ([]RecentScan, error)
+	GetRepoStatsByInstallation(ctx context.Context, installationID int64) ([]RepoStatSummary, error)
 
 	// Audit trail (legacy — manifest history + verification decisions)
 	SaveManifestSnapshot(ctx context.Context, s ManifestSnapshot) error
@@ -69,6 +70,10 @@ type Store interface {
 	GetAuditEvents(ctx context.Context, tenantID int64, repo string, limit int, offset int) ([]AuditEvent, error)
 	GetLastAuditHash(ctx context.Context, tenantID int64) (string, error)
 	GetAuditChainRows(ctx context.Context, tenantID int64) ([]AuditChainRow, error)
+
+	// Capability graph — cross-repo confirmed capability view
+	GetConfirmedCapabilities(ctx context.Context, installationID int64, f ConfirmedCapabilityFilter) ([]ConfirmedCapability, error)
+	ListRepoNamesForInstallation(ctx context.Context, installationID int64) ([]string, error)
 
 	Close() error
 }
@@ -237,6 +242,16 @@ type AuditChainRow struct {
 	Hash       string
 }
 
+// RepoStatSummary is a lightweight per-repo row for the dashboard overview table.
+type RepoStatSummary struct {
+	RepoID       int64
+	FullName     string
+	TotalScans   int
+	TotalCaps    int
+	ConfirmCount int
+	RevertCount  int
+}
+
 // InstallationStats aggregates analytics across all repos under one GitHub App installation.
 type InstallationStats struct {
 	InstallationID int64
@@ -246,6 +261,30 @@ type InstallationStats struct {
 	ConfirmCount   int
 	RevertCount    int
 	ByDeveloper    map[string]DeveloperStats
+}
+
+// ConfirmedCapabilityFilter scopes GetConfirmedCapabilities results.
+// Zero values mean "no filter" for each field.
+type ConfirmedCapabilityFilter struct {
+	Categories  []string  // empty = all categories
+	RepoNames   []string  // empty = all repos
+	From        time.Time // zero = no lower bound on confirmed_at
+	To          time.Time // zero = no upper bound on confirmed_at
+	ConfirmedBy string    // empty = all actors
+	Search      string    // free-text match against name + evidence (case-insensitive)
+}
+
+// ConfirmedCapability is the result row for the cross-repo capability graph.
+type ConfirmedCapability struct {
+	RepoFullName string
+	RepoID       int64
+	CapabilityID string
+	Name         string
+	Category     string
+	Evidence     string
+	LocationFile string
+	ConfirmedBy  string
+	ConfirmedAt  time.Time
 }
 
 // --- SQLiteStore ---
@@ -278,6 +317,23 @@ func Open(path string) (*SQLiteStore, error) {
 
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()
+}
+
+// DropSeedData removes all rows created by "tass seed" (installation ID 12345).
+// Safe to call on a live database — only touches seed-specific rows.
+func (s *SQLiteStore) DropSeedData(ctx context.Context) error {
+	stmts := []string{
+		`DELETE FROM verification_decisions WHERE scan_id IN (SELECT id FROM scan_results WHERE installation_id = 12345)`,
+		`DELETE FROM scan_results WHERE installation_id = 12345`,
+		`DELETE FROM repositories WHERE installation_id = 12345`,
+		`DELETE FROM installations WHERE id = 12345`,
+	}
+	for _, q := range stmts {
+		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("storage: DropSeedData: %w", err)
+		}
+	}
+	return nil
 }
 
 // migrate runs all SQL files in migrations/ in lexicographic order.
@@ -876,6 +932,35 @@ func (s *SQLiteStore) GetStatsByInstallation(ctx context.Context, installationID
 	return stats, nil
 }
 
+func (s *SQLiteStore) GetRepoStatsByInstallation(ctx context.Context, installationID int64) ([]RepoStatSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT r.id, r.full_name,
+			COUNT(DISTINCT sr.id),
+			COALESCE(SUM(sr.novel_count), 0),
+			COALESCE(SUM(CASE WHEN vd.decision = 'confirm' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN vd.decision = 'revert'  THEN 1 ELSE 0 END), 0)
+		FROM repositories r
+		LEFT JOIN scan_results sr ON sr.repo_id = r.id
+		LEFT JOIN verification_decisions vd ON vd.scan_id = sr.id
+		WHERE r.installation_id = ?
+		GROUP BY r.id, r.full_name
+		ORDER BY r.full_name
+	`, installationID)
+	if err != nil {
+		return nil, fmt.Errorf("storage: GetRepoStatsByInstallation %d: %w", installationID, err)
+	}
+	defer rows.Close()
+	var out []RepoStatSummary
+	for rows.Next() {
+		var rs RepoStatSummary
+		if err := rows.Scan(&rs.RepoID, &rs.FullName, &rs.TotalScans, &rs.TotalCaps, &rs.ConfirmCount, &rs.RevertCount); err != nil {
+			return nil, fmt.Errorf("storage: scan RepoStatSummary row: %w", err)
+		}
+		out = append(out, rs)
+	}
+	return out, rows.Err()
+}
+
 // --- Tamper-evident audit events (NIST AU-9(3) / AU-10(3)) ---
 
 func (s *SQLiteStore) SaveAuditEvent(ctx context.Context, evt AuditEvent) error {
@@ -1078,4 +1163,137 @@ func sortCanonicalKeys(v any) any {
 	default:
 		return v
 	}
+}
+
+// --- Capability graph ---
+
+// GetConfirmedCapabilities returns the current-state confirmed capabilities for an
+// installation: for each (repo, capabilityID) pair, the latest decision wins. If the
+// latest decision is "confirm" the capability is included; "revert" excludes it.
+// SQL WHERE clauses narrow by category and repo; date/user/search filters are applied in Go.
+func (s *SQLiteStore) GetConfirmedCapabilities(ctx context.Context, installationID int64, f ConfirmedCapabilityFilter) ([]ConfirmedCapability, error) {
+	query := `
+		SELECT
+			r.full_name,
+			r.id,
+			json_extract(c.value, '$.id'),
+			COALESCE(json_extract(c.value, '$.name'), ''),
+			COALESCE(json_extract(c.value, '$.category'), ''),
+			COALESCE(json_extract(c.value, '$.raw_evidence'), ''),
+			COALESCE(json_extract(c.value, '$.location.file'), ''),
+			vd.decided_by,
+			vd.decided_at,
+			vd.decision
+		FROM verification_decisions vd
+		JOIN scan_results sr ON sr.id = vd.scan_id
+		JOIN repositories r ON r.id = sr.repo_id
+		JOIN json_each(sr.capabilities_json) c
+			ON json_extract(c.value, '$.id') = vd.capability_id
+		WHERE r.installation_id = ?`
+
+	args := []any{installationID}
+
+	if len(f.Categories) > 0 {
+		placeholders := make([]string, len(f.Categories))
+		for i, cat := range f.Categories {
+			placeholders[i] = "?"
+			args = append(args, cat)
+		}
+		query += " AND json_extract(c.value, '$.category') IN (" + strings.Join(placeholders, ",") + ")"
+	}
+
+	if len(f.RepoNames) > 0 {
+		placeholders := make([]string, len(f.RepoNames))
+		for i, repo := range f.RepoNames {
+			placeholders[i] = "?"
+			args = append(args, repo)
+		}
+		query += " AND r.full_name IN (" + strings.Join(placeholders, ",") + ")"
+	}
+
+	query += " ORDER BY vd.decided_at DESC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("storage: get confirmed capabilities: %w", err)
+	}
+	defer rows.Close()
+
+	// Dedup by (repoID, capID): first occurrence (latest decided_at) wins.
+	type key struct {
+		repoID int64
+		capID  string
+	}
+	seen := make(map[key]bool)
+	lc := strings.ToLower
+
+	var results []ConfirmedCapability
+	for rows.Next() {
+		var (
+			cap        ConfirmedCapability
+			decidedAt  string
+			decision   string
+		)
+		if err := rows.Scan(
+			&cap.RepoFullName, &cap.RepoID,
+			&cap.CapabilityID, &cap.Name, &cap.Category,
+			&cap.Evidence, &cap.LocationFile,
+			&cap.ConfirmedBy, &decidedAt, &decision,
+		); err != nil {
+			return nil, fmt.Errorf("storage: scan confirmed capability row: %w", err)
+		}
+		cap.ConfirmedAt, _ = time.Parse(time.RFC3339, decidedAt)
+
+		k := key{cap.RepoID, cap.CapabilityID}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+
+		// Latest decision was a revert — skip.
+		if decision != "confirm" {
+			continue
+		}
+
+		// Go-side filters: date range, confirmed by, free-text search.
+		if !f.From.IsZero() && cap.ConfirmedAt.Before(f.From) {
+			continue
+		}
+		if !f.To.IsZero() && cap.ConfirmedAt.After(f.To) {
+			continue
+		}
+		if f.ConfirmedBy != "" && cap.ConfirmedBy != f.ConfirmedBy {
+			continue
+		}
+		if f.Search != "" {
+			q := lc(f.Search)
+			if !strings.Contains(lc(cap.Name), q) && !strings.Contains(lc(cap.Evidence), q) {
+				continue
+			}
+		}
+
+		results = append(results, cap)
+	}
+	return results, rows.Err()
+}
+
+// ListRepoNamesForInstallation returns the full_name of every repo in the install.
+// Used to populate the graph filter's repo multi-select.
+func (s *SQLiteStore) ListRepoNamesForInstallation(ctx context.Context, installationID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT full_name FROM repositories WHERE installation_id = ? ORDER BY full_name`,
+		installationID)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list repo names: %w", err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
 }

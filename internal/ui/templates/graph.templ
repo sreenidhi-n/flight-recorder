@@ -1,0 +1,307 @@
+package templates
+
+import (
+	"fmt"
+	"strings"
+	"time"
+	"github.com/tass-security/tass/internal/storage"
+)
+
+// GraphPageData bundles everything needed for the /graph page.
+type GraphPageData struct {
+	Login    string
+	Avatar   string
+	AllRepos []string // all repo names in the install, for the filter panel
+
+	// Current filter state (reflected back into the form inputs)
+	FilterCategories []string
+	FilterRepos      []string
+	FilterFrom       string // YYYY-MM-DD or ""
+	FilterTo         string // YYYY-MM-DD or ""
+	FilterBy         string // GitHub login or ""
+	FilterSearch     string
+
+	Capabilities []storage.ConfirmedCapability
+}
+
+// csvQueryString serialises the current filter state as a URL query string so
+// the "Download CSV" link carries the same filters as the current view.
+func csvQueryString(d GraphPageData) string {
+	var parts []string
+	parts = append(parts, "format=csv")
+	for _, c := range d.FilterCategories {
+		parts = append(parts, "category="+c)
+	}
+	for _, r := range d.FilterRepos {
+		parts = append(parts, "repo="+r)
+	}
+	if d.FilterFrom != "" {
+		parts = append(parts, "from="+d.FilterFrom)
+	}
+	if d.FilterTo != "" {
+		parts = append(parts, "to="+d.FilterTo)
+	}
+	if d.FilterBy != "" {
+		parts = append(parts, "by="+d.FilterBy)
+	}
+	if d.FilterSearch != "" {
+		parts = append(parts, "q="+d.FilterSearch)
+	}
+	return strings.Join(parts, "&")
+}
+
+func graphCatSelected(filterCats []string, cat string) bool {
+	if len(filterCats) == 0 {
+		return false
+	}
+	for _, c := range filterCats {
+		if c == cat {
+			return true
+		}
+	}
+	return false
+}
+
+func graphRepoSelected(filterRepos []string, repo string) bool {
+	for _, r := range filterRepos {
+		if r == repo {
+			return true
+		}
+	}
+	return false
+}
+
+func graphCapBadgeClass(cat string) string {
+	switch cat {
+	case "external_dependency":
+		return "dep"
+	case "external_api", "network_access":
+		return "net"
+	case "database_operation":
+		return "db"
+	case "filesystem_operation":
+		return "fs"
+	case "privilege_pattern":
+		return "priv"
+	default:
+		return "net"
+	}
+}
+
+func graphCapLabel(cat string) string {
+	switch cat {
+	case "external_dependency":
+		return "Dependency"
+	case "external_api":
+		return "External API"
+	case "network_access":
+		return "Network"
+	case "database_operation":
+		return "Database"
+	case "filesystem_operation":
+		return "Filesystem"
+	case "privilege_pattern":
+		return "Privilege"
+	default:
+		return cat
+	}
+}
+
+func graphFormatTime(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	return t.UTC().Format("Jan 2, 2006 15:04")
+}
+
+// Graph renders the full /graph page.
+templ Graph(d GraphPageData) {
+	@Page("Capability Graph", d.Login, d.Avatar) {
+		<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+			<div>
+				<h2>Capability Graph</h2>
+				<p><a href="/dashboard">← Dashboard</a> · All confirmed capabilities across every repository</p>
+			</div>
+			<a
+				href={ templ.SafeURL("/graph?" + csvQueryString(d)) }
+				class="btn"
+				style="padding:7px 16px;white-space:nowrap"
+			>Download CSV ↓</a>
+		</div>
+
+		// Filter panel
+		<form
+			hx-get="/graph"
+			hx-target="#graph-section"
+			hx-swap="outerHTML"
+			hx-push-url="true"
+			style="background:var(--bg2);border:0.5px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:24px"
+		>
+			<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:18px;align-items:start">
+				// Category checkboxes
+				<div>
+					<div style="font-size:12px;font-weight:600;color:var(--fg2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em">Category</div>
+					for _, cat := range []string{"external_dependency","network_access","database_operation","filesystem_operation","privilege_pattern","external_api"} {
+						<label style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:pointer;font-size:13px">
+							<input
+								type="checkbox"
+								name="category"
+								value={ cat }
+								if graphCatSelected(d.FilterCategories, cat) {
+									checked
+								}
+							/>
+							<span class={ "cap-badge " + graphCapBadgeClass(cat) }>{ graphCapLabel(cat) }</span>
+						</label>
+					}
+				</div>
+
+				// Repo multi-select
+				if len(d.AllRepos) > 0 {
+					<div>
+						<div style="font-size:12px;font-weight:600;color:var(--fg2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em">Repository</div>
+						<div style="max-height:140px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
+							for _, repo := range d.AllRepos {
+								<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+									<input
+										type="checkbox"
+										name="repo"
+										value={ repo }
+										if graphRepoSelected(d.FilterRepos, repo) {
+											checked
+										}
+									/>
+									{ repo }
+								</label>
+							}
+						</div>
+					</div>
+				}
+
+				// Date range
+				<div>
+					<div style="font-size:12px;font-weight:600;color:var(--fg2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em">Confirmed date</div>
+					<label style="display:block;font-size:12px;color:var(--fg2);margin-bottom:4px">From</label>
+					<input
+						type="date"
+						name="from"
+						value={ d.FilterFrom }
+						style="width:100%;padding:6px 10px;border:0.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:13px;font-family:var(--sans);margin-bottom:8px;box-sizing:border-box"
+					/>
+					<label style="display:block;font-size:12px;color:var(--fg2);margin-bottom:4px">To</label>
+					<input
+						type="date"
+						name="to"
+						value={ d.FilterTo }
+						style="width:100%;padding:6px 10px;border:0.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:13px;font-family:var(--sans);box-sizing:border-box"
+					/>
+				</div>
+
+				// Confirmed by + search
+				<div>
+					<div style="font-size:12px;font-weight:600;color:var(--fg2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em">Confirmed by</div>
+					<input
+						type="text"
+						name="by"
+						value={ d.FilterBy }
+						placeholder="GitHub login"
+						style="width:100%;padding:6px 10px;border:0.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:13px;font-family:var(--sans);margin-bottom:16px;box-sizing:border-box"
+					/>
+					<div style="font-size:12px;font-weight:600;color:var(--fg2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em">Search</div>
+					<input
+						type="text"
+						name="q"
+						value={ d.FilterSearch }
+						placeholder="e.g. stripe, s3, postgres"
+						style="width:100%;padding:6px 10px;border:0.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:13px;font-family:var(--sans);box-sizing:border-box"
+					/>
+				</div>
+			</div>
+
+			<div style="display:flex;gap:10px;margin-top:16px">
+				<button type="submit" class="btn btn-primary" style="padding:7px 20px">Apply filters</button>
+				<a href="/graph" class="btn" style="padding:7px 16px">Clear</a>
+			</div>
+		</form>
+
+		<div id="graph-section">
+			@GraphTable(d)
+		</div>
+	}
+}
+
+// GraphTable is the swappable section returned by HTMX filter requests.
+templ GraphTable(d GraphPageData) {
+	<div id="graph-section">
+		if len(d.Capabilities) == 0 {
+			<p style="color:var(--fg2);padding:24px 0">No confirmed capabilities match the current filters.</p>
+		} else {
+			<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+				<div class="section-title" style="margin-bottom:0">{ fmt.Sprintf("%d confirmed %s", len(d.Capabilities), pluralCap(len(d.Capabilities))) }</div>
+			</div>
+			<div class="table-wrap">
+				<table>
+					<thead>
+						<tr>
+							<th>Repository</th>
+							<th>Capability</th>
+							<th>Category</th>
+							<th>Endpoint / Identifier</th>
+							<th>Confirmed by</th>
+							<th>Confirmed at</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, cap := range d.Capabilities {
+							<tr>
+								<td>
+									<a href={ templ.SafeURL("/dashboard/repo?repo_id=" + fmt.Sprintf("%d", cap.RepoID)) }
+										style="font-family:var(--mono);font-size:12px">{ cap.RepoFullName }</a>
+								</td>
+								<td style="font-weight:500">{ cap.Name }</td>
+								<td>
+									<span class={ "cap-badge " + graphCapBadgeClass(cap.Category) }>
+										{ graphCapLabel(cap.Category) }
+									</span>
+								</td>
+								<td style="font-family:var(--mono);font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={ cap.Evidence }>
+									if cap.LocationFile != "" {
+										{ cap.LocationFile }
+									} else if cap.Evidence != "" {
+										{ truncateEvidence(cap.Evidence) }
+									} else {
+										<span style="color:var(--fg2)">—</span>
+									}
+								</td>
+								<td style="font-family:var(--mono);font-size:12px">{ "@" + cap.ConfirmedBy }</td>
+								<td style="white-space:nowrap;color:var(--fg2)">{ graphFormatTime(cap.ConfirmedAt) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		}
+	</div>
+}
+
+func pluralCap(n int) string {
+	if n == 1 {
+		return "capability"
+	}
+	return "capabilities"
+}
+
+func truncateEvidence(s string) string {
+	// Take first non-empty line, cap at 60 chars
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if len(line) > 60 {
+			return line[:57] + "..."
+		}
+		return line
+	}
+	return s
+}

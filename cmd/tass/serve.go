@@ -129,6 +129,7 @@ func runServe(args []string) error {
 	auditNDJSONHandler := server.NewAuditNDJSONHandler(store)
 	policyAPIHandler := server.NewPolicyHandler(store)
 	importAPIHandler := server.NewImportHandler(store, baseURL)
+	runtimeVerifyHandler := server.NewRuntimeVerifyHandler()
 	complianceHandler := server.NewComplianceHandler(store, version, auditEmitter, rbacCache, fetchPerm, sessions)
 
 	// --- UI handlers ---
@@ -138,6 +139,8 @@ func runServe(args []string) error {
 	dashboardHandler := ui.NewDashboardHandler(store, sessions, app, rbacCache, fetchPerm)
 	repoDashboardHandler := ui.NewRepoDashboardHandler(store, sessions, rbacCache, fetchPerm)
 	auditPageHandler := ui.NewAuditPageHandler(store, sessions, rbacCache, fetchPerm)
+	graphHandler := ui.NewGraphPageHandler(store, sessions, rbacCache, fetchPerm)
+	docsHandler := ui.NewDocsHandler(sessions)
 	setupHandler := ui.NewSetupHandler(store, sessions)
 
 	// --- HTTP server ---
@@ -150,13 +153,16 @@ func runServe(args []string) error {
 		APIAuditVerify: auditVerifyHandler,
 		APIAuditNDJSON: auditNDJSONHandler,
 		APIPolicy:     policyAPIHandler,
-		APIImport:     importAPIHandler,
+		APIImport:        importAPIHandler,
+		APIRuntimeVerify: runtimeVerifyHandler,
 		Compliance:    complianceHandler,
 		Index:         indexHandler,
 		VerifyPage:    verifyPageHandler,
 		Dashboard:     server.RequireAuthMiddleware(sessions, dashboardHandler),
 		RepoDashboard: server.RequireAuthMiddleware(sessions, repoDashboardHandler),
 		Audit:         server.RequireAuthMiddleware(sessions, auditPageHandler),
+		Graph:         server.RequireAuthMiddleware(sessions, graphHandler),
+		Docs:          docsHandler,
 		Setup:         setupHandler,
 		Static:        ui.StaticHandler(),
 		OAuthStart:    http.HandlerFunc(oauthHandler.HandleStart),

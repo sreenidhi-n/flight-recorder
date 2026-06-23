@@ -40,11 +40,12 @@ func (h *OAuthHandler) HandleStart(w http.ResponseWriter, r *http.Request) {
 		returnTo = "/dashboard"
 	}
 	// read:user — profile; repo — collaborator permission checks on private repos (RBAC).
+	// redirect_uri is omitted — GitHub uses the URL registered in the App settings,
+	// avoiding any mismatch when the registered URL and TASS_BASE_URL differ.
 	params := url.Values{
-		"client_id":    {h.cfg.ClientID},
-		"redirect_uri": {h.callbackURL()},
-		"scope":        {"read:user repo"},
-		"state":        {returnTo},
+		"client_id": {h.cfg.ClientID},
+		"scope":     {"read:user repo"},
+		"state":     {returnTo},
 	}
 	http.Redirect(w, r,
 		"https://github.com/login/oauth/authorize?"+params.Encode(),
@@ -107,10 +108,6 @@ func (h *OAuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-func (h *OAuthHandler) callbackURL() string {
-	return strings.TrimRight(h.cfg.BaseURL, "/") + "/auth/github/callback"
-}
-
 type githubUser struct {
 	Login     string `json:"login"`
 	AvatarURL string `json:"avatar_url"`
@@ -121,7 +118,6 @@ func (h *OAuthHandler) exchangeCode(ctx context.Context, code string) (string, e
 		"client_id":     {h.cfg.ClientID},
 		"client_secret": {h.cfg.ClientSecret},
 		"code":          {code},
-		"redirect_uri":  {h.callbackURL()},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"https://github.com/login/oauth/access_token",

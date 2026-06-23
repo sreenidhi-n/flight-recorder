@@ -10,7 +10,7 @@ import (
 	"github.com/tass-security/tass/pkg/manifest"
 )
 
-func runPolicy(args []string) error {
+func runPolicy(args []string) error { 
 	fs := flag.NewFlagSet("policy", flag.ContinueOnError)
 	format := fs.String("format", "k8s", "output format: k8s or iam")
 	app := fs.String("app", "myapp", "app label for podSelector (k8s) or Sid prefix (iam)")

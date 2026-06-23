@@ -13,10 +13,46 @@ type PullRequestEvent struct {
 }
 
 type PullRequest struct {
-	Number int    `json:"number"`
-	Head   Ref    `json:"head"`
-	Base   Ref    `json:"base"`
-	State  string `json:"state"`
+	Number    int    `json:"number"`
+	Head      Ref    `json:"head"`
+	Base      Ref    `json:"base"`
+	State     string `json:"state"`
+	User      PRUser `json:"user"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}
+
+// PRUser is the author of the pull request.
+type PRUser struct {
+	Login string `json:"login"`
+	ID    int64  `json:"id"`
+}
+
+// CommitListEntry is one element from
+// GET /repos/{owner}/{repo}/pulls/{n}/commits.
+// Only the fields needed for AI detection are decoded.
+type CommitListEntry struct {
+	SHA    string          `json:"sha"`
+	Commit CommitDetail    `json:"commit"`
+	Author *GitHubAuthor   `json:"author"` // nil when not associated with a GitHub account
+}
+
+// CommitDetail holds the git commit object data.
+type CommitDetail struct {
+	Message string         `json:"message"`
+	Author  CommitGitAuthor `json:"author"`
+}
+
+// CommitGitAuthor is the git-level author (name + email, not the GitHub login).
+type CommitGitAuthor struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+// GitHubAuthor is the GitHub user associated with the commit (may be nil).
+type GitHubAuthor struct {
+	Login string `json:"login"`
+	ID    int64  `json:"id"`
 }
 
 type Ref struct {

@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/sreenidhi-n/capability-manifest-spec/main/schema/contract.schema.json",
+  "title": "TASS Capability Contract",
+  "description": "Schema for tass.contract.yaml — the capability enforcement policy (Capability Manifest Spec v0.1)",
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Contract format version. Must be the integer 1."
+    },
+    "service": {
+      "type": "string",
+      "description": "Human-readable service name for documentation purposes."
+    },
+    "allowed": {
+      "type": "object",
+      "description": "Per-category allowlists. Capabilities in a listed category must match at least one pattern. Categories not listed are unrestricted.",
+      "propertyNames": {
+        "enum": [
+          "external_dependency",
+          "external_api",
+          "database_operation",
+          "network_access",
+          "filesystem_operation",
+          "privilege_pattern"
+        ]
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": "Glob patterns matched against capability name, ID, or raw evidence. Case-insensitive."
+      }
+    },
+    "forbidden": {
+      "type": "object",
+      "description": "Per-category blocklists. Capabilities matching any pattern are hard-blocked.",
+      "propertyNames": {
+        "enum": [
+          "external_dependency",
+          "external_api",
+          "database_operation",
+          "network_access",
+          "filesystem_operation",
+          "privilege_pattern"
+        ]
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": "Glob patterns. Use \"*\" to block the entire category unconditionally."
+      }
+    },
+    "limits": {
+      "type": "object",
+      "description": "Maximum number of novel capabilities per category per PR scan.",
+      "propertyNames": {
+        "enum": [
+          "external_dependency",
+          "external_api",
+          "database_operation",
+          "network_access",
+          "filesystem_operation",
+          "privilege_pattern"
+        ]
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Maximum count of novel capabilities in this category per scan."
+      }
+    }
+  }
+}

@@ -96,6 +96,9 @@ func (m *serverMemStore) GetStatsByInstallation(_ context.Context, _ int64) (*st
 func (m *serverMemStore) GetRecentScans(_ context.Context, _ int64, _ int) ([]storage.RecentScan, error) {
 	return nil, nil
 }
+func (m *serverMemStore) GetRepoStatsByInstallation(_ context.Context, _ int64) ([]storage.RepoStatSummary, error) {
+	return nil, nil
+}
 func (m *serverMemStore) SaveAuditEvent(_ context.Context, _ storage.AuditEvent) error { return nil }
 func (m *serverMemStore) GetAuditEvents(_ context.Context, _ int64, _ string, _, _ int) ([]storage.AuditEvent, error) {
 	return nil, nil
@@ -113,6 +116,12 @@ func (m *serverMemStore) GetAuditTrail(_ context.Context, _ int64, _, _ time.Tim
 	return nil, nil
 }
 func (m *serverMemStore) GetManifestHistory(_ context.Context, _ int64, _ int) ([]storage.ManifestSnapshot, error) {
+	return nil, nil
+}
+func (m *serverMemStore) GetConfirmedCapabilities(_ context.Context, _ int64, _ storage.ConfirmedCapabilityFilter) ([]storage.ConfirmedCapability, error) {
+	return nil, nil
+}
+func (m *serverMemStore) ListRepoNamesForInstallation(_ context.Context, _ int64) ([]string, error) {
 	return nil, nil
 }
 func (m *serverMemStore) Close() error { return nil }

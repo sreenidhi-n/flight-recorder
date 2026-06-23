@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/sreenidhi-n/capability-manifest-spec/main/schema/manifest.schema.json",
+  "title": "TASS Capability Manifest",
+  "description": "Schema for tass.manifest.yaml — the behavioral capability manifest (Capability Manifest Spec v0.1)",
+  "type": "object",
+  "required": ["version", "generated_at", "repo", "capabilities"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1",
+      "description": "Manifest format version. Must be the string \"1\"."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last manifest generation or update."
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$",
+      "description": "Repository full name in owner/repo format.",
+      "examples": ["acme-corp/payments-service"]
+    },
+    "capabilities": {
+      "type": "array",
+      "description": "All capabilities reviewed for this repository. May be empty.",
+      "items": {
+        "$ref": "#/$defs/ManifestEntry"
+      }
+    }
+  },
+  "$defs": {
+    "ManifestEntry": {
+      "type": "object",
+      "required": ["id", "name", "category", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Deterministic stable capability identifier.",
+          "examples": [
+            "dep:go:github.com/stripe/stripe-go/v76",
+            "ast:go:net/http:client:Post",
+            "dep:python:requests",
+            "ast:python:subprocess:run"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable capability name."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "external_dependency",
+            "external_api",
+            "database_operation",
+            "network_access",
+            "filesystem_operation",
+            "privilege_pattern"
+          ],
+          "description": "Capability category."
+        },
+        "source": {
+          "type": "string",
+          "enum": ["layer0_dependency", "layer1_ast"],
+          "description": "Detection layer that produced this capability."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["confirmed", "auto_detected", "reverted"],
+          "description": "Review status of this capability."
+        },
+        "confirmed_by": {
+          "type": "string",
+          "description": "GitHub username of the reviewer."
+        },
+        "confirmed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the review decision."
+        },
+        "first_detected": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when this capability was first detected."
+        },
+        "note": {
+          "type": "string",
+          "description": "Human context for why this capability exists or was approved."
+        },
+        "locations": {
+          "type": "array",
+          "description": "Source code locations where this capability was detected.",
+          "items": {
+            "$ref": "#/$defs/CodeLocation"
+          }
+        }
+      }
+    },
+    "CodeLocation": {
+      "type": "object",
+      "required": ["file"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Relative path from repo root to the source file."
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based line number of the detection."
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "0-based column offset."
+        }
+      }
+    }
+  }
+}

@@ -14,6 +14,8 @@ import (
 func runSeed(args []string) error {
 	fs := flag.NewFlagSet("seed", flag.ContinueOnError)
 	dbPath := fs.String("db", "tass.db", "path to SQLite database to seed")
+	login := fs.String("login", "acme-corp", "GitHub login to associate with the demo installation (use your own login for auto-discovery)")
+	drop := fs.Bool("drop", false, "remove previously seeded demo data and exit")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
@@ -28,9 +30,17 @@ func runSeed(args []string) error {
 	}
 	defer store.Close()
 
+	if *drop {
+		if err := store.DropSeedData(ctx); err != nil {
+			return fmt.Errorf("tass seed --drop: %w", err)
+		}
+		fmt.Fprintln(os.Stdout, "  ✓ demo data removed (installation 12345 and all associated rows)")
+		return nil
+	}
+
 	// Idempotency: skip if demo data is already present.
 	if existing, _ := store.GetScan(ctx, "demo-scan-pay-001"); existing != nil {
-		fmt.Fprintln(os.Stderr, "seed: demo data already present — delete the database file to re-seed")
+		fmt.Fprintln(os.Stderr, "seed: demo data already present — run with --drop first to re-seed")
 		return nil
 	}
 
@@ -40,7 +50,7 @@ func runSeed(args []string) error {
 	// ── Installation ─────────────────────────────────────────────────────────
 	if err := store.UpsertInstallation(ctx, storage.Installation{
 		ID:             12345,
-		AccountLogin:   "acme-corp",
+		AccountLogin:   *login,
 		AccountType:    "Organization",
 		InstalledAt:    daysAgo(30),
 		AccessToken:    "ghs_demo_placeholder_not_real",
@@ -246,7 +256,7 @@ func runSeed(args []string) error {
 
 	// ── Summary ───────────────────────────────────────────────────────────────
 	fmt.Println()
-	fmt.Println("  ✓ 1 installation    (id: 12345, acme-corp)")
+	fmt.Printf("  ✓ 1 installation    (id: 12345, %s)\n", *login)
 	fmt.Println("  ✓ 2 repositories    (payments-service, ai-support-bot)")
 	fmt.Println("  ✓ 5 scan results    (3 payments, 2 ai-support-bot)")
 	fmt.Println("  ✓ 18 decisions      (alice: 7, bob: 6, carol: 5)")

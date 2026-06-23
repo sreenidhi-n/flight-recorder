@@ -130,12 +130,17 @@ func (h *SlashCommandHandler) Handle(ctx context.Context, evt IssueCommentEvent)
 	// Map 1-based display indices to capability IDs.
 	indexToCap := indexedCaps(scan.Capabilities)
 
-	// Apply decisions.
+	// Apply decisions — contract-violated capabilities are hard-blocked.
 	var applied []string
+	var blocked []string
 	actor := evt.Comment.User.Login
 	for idx := range confirms {
 		cap, ok := indexToCap[idx]
 		if !ok {
+			continue
+		}
+		if cap.ContractViolated {
+			blocked = append(blocked, fmt.Sprintf("🚫 #%d %s — contract violation: %s", idx, cap.Name, cap.ContractViolationReason))
 			continue
 		}
 		if _, err := h.verifier.Decide(ctx, scan.ID, cap.ID, contracts.DecisionConfirm, "via /tass slash command", actor); err != nil {
@@ -149,11 +154,21 @@ func (h *SlashCommandHandler) Handle(ctx context.Context, evt IssueCommentEvent)
 		if !ok {
 			continue
 		}
+		if cap.ContractViolated {
+			blocked = append(blocked, fmt.Sprintf("🚫 #%d %s — contract violation: %s", idx, cap.Name, cap.ContractViolationReason))
+			continue
+		}
 		if _, err := h.verifier.Decide(ctx, scan.ID, cap.ID, contracts.DecisionRevert, "via /tass slash command", actor); err != nil {
 			log.Error("slash_command: revert capability", "cap", cap.ID, "error", err)
 		} else {
 			applied = append(applied, fmt.Sprintf("↩️ #%d %s", idx, cap.Name))
 		}
+	}
+
+	if len(blocked) > 0 {
+		h.postComment(ctx, installToken, owner, repoName, evt.Issue.Number,
+			fmt.Sprintf("@%s — the following capabilities are hard-blocked by `tass.contract.yaml` and cannot be confirmed or reverted via slash command. Edit `tass.contract.yaml` to allow them, or remove the offending code:\n\n%s",
+				actor, strings.Join(blocked, "\n")))
 	}
 
 	if len(applied) > 0 {

@@ -41,8 +41,18 @@ type Capability struct {
 	Category    CapCategory    `json:"category" yaml:"category"`
 	Source      DetectionLayer `json:"source" yaml:"source"`
 	Location    CodeLocation   `json:"location" yaml:"location"`
+	// Locations accumulates all call-site locations when the same capability ID
+	// is detected in multiple files. The primary Location above holds the first
+	// occurrence; additional occurrences are appended here (BP-3 fix).
+	Locations   []CodeLocation `json:"locations,omitempty" yaml:"locations,omitempty"`
 	Confidence  float64        `json:"confidence" yaml:"confidence"`
 	RawEvidence string         `json:"raw_evidence" yaml:"raw_evidence"`
+
+	// Set when a tass.contract.yaml rule blocks this capability.
+	// Contract violations are hard blocks — they cannot be confirmed or reverted
+	// via slash commands; only by updating tass.contract.yaml itself.
+	ContractViolated        bool   `json:"contract_violated,omitempty" yaml:"contract_violated,omitempty"`
+	ContractViolationReason string `json:"contract_violation_reason,omitempty" yaml:"contract_violation_reason,omitempty"`
 }
 
 // CapabilitySet is the complete output of a scan run.

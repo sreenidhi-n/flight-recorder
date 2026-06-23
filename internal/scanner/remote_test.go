@@ -169,6 +169,51 @@ require github.com/stripe/stripe-go/v76 v76.0.0
 	}
 }
 
+// TestScanRemote_CrossFileLocationMerge verifies that when the same Layer 1
+// capability ID is detected in two different source files, the scanner merges
+// them into one capability entry with both locations recorded (BP-3 fix).
+func TestScanRemote_CrossFileLocationMerge(t *testing.T) {
+	rules := buildHTTPRule(t)
+	astScanner := scanner.NewASTScanner(rules)
+	s := scanner.New(scanner.DefaultRegistry, astScanner)
+
+	// Two files both contain a single http.Post call → same base ID.
+	fileA := []byte(`package payments
+import "net/http"
+func chargeCard() { http.Post("https://api.stripe.com/charge", "application/json", nil) }
+`)
+	fileB := []byte(`package refunds
+import "net/http"
+func issueRefund() { http.Post("https://api.stripe.com/refund", "application/json", nil) }
+`)
+
+	headFiles := map[string][]byte{
+		"internal/payments/charge.go": fileA,
+		"internal/refunds/refund.go":  fileB,
+	}
+
+	cs, err := s.ScanRemote(headFiles, nil)
+	if err != nil {
+		t.Fatalf("ScanRemote: %v", err)
+	}
+
+	// Both files produce ast:go:net/http:client:Post → should be ONE capability
+	// with two locations, not two separate capabilities or one dropped.
+	postCaps := 0
+	for _, c := range cs.Capabilities {
+		if c.ID == "ast:go:net/http:client:Post" {
+			postCaps++
+			if len(c.Locations) < 2 {
+				t.Errorf("expected >=2 locations for cross-file merge, got %d: %v",
+					len(c.Locations), c.Locations)
+			}
+		}
+	}
+	if postCaps != 1 {
+		t.Errorf("expected 1 merged capability for http.Post across 2 files, got %d", postCaps)
+	}
+}
+
 func remoteCapIDs(caps []contracts.Capability) []string {
 	ids := make([]string, len(caps))
 	for i, c := range caps {

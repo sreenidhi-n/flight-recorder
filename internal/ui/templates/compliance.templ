@@ -1,0 +1,432 @@
+package templates
+
+import (
+	"fmt"
+	"strings"
+	"time"
+	"github.com/tass-security/tass/internal/compliance"
+)
+
+// CompliancePageData bundles everything the compliance report page needs.
+type CompliancePageData struct {
+	Login    string
+	Avatar   string
+	Report   *compliance.Report
+	RepoName string
+	// Active filter values (reflected into download links)
+	Framework string
+	Since     string
+}
+
+func complianceDecisionStyle(decision string) string {
+	switch decision {
+	case "confirmed":
+		return "background:var(--green-bg,#e6f4ea);color:var(--green-fg,#1a7f37)"
+	case "reverted":
+		return "background:var(--red-bg,#fce8e6);color:var(--red-fg,#c00)"
+	default:
+		return "background:var(--orange-bg,#fff3cd);color:var(--orange-fg,#856404)"
+	}
+}
+
+func complianceDecisionLabel(decision string) string {
+	switch decision {
+	case "confirmed":
+		return "Confirmed"
+	case "reverted":
+		return "Reverted"
+	default:
+		return "Unreviewed"
+	}
+}
+
+func complianceCatClass(cat string) string {
+	switch cat {
+	case "external_dependency":
+		return "dep"
+	case "external_api", "network_access":
+		return "net"
+	case "database_operation":
+		return "db"
+	case "filesystem_operation":
+		return "fs"
+	case "privilege_pattern":
+		return "priv"
+	default:
+		return "net"
+	}
+}
+
+func complianceCatLabel(cat string) string {
+	switch cat {
+	case "external_dependency":
+		return "Dependency"
+	case "external_api":
+		return "External API"
+	case "network_access":
+		return "Network"
+	case "database_operation":
+		return "Database"
+	case "filesystem_operation":
+		return "Filesystem"
+	case "privilege_pattern":
+		return "Privilege"
+	default:
+		return cat
+	}
+}
+
+func complianceShortID(id string) string {
+	parts := strings.Split(id, ":")
+	if len(parts) <= 3 {
+		return id
+	}
+	return strings.Join(parts[len(parts)-2:], ":")
+}
+
+func complianceControlSummary(refs []compliance.ControlRef) string {
+	if len(refs) == 0 {
+		return "—"
+	}
+	ids := make([]string, 0, len(refs))
+	for _, r := range refs {
+		ids = append(ids, r.ControlID)
+	}
+	if len(ids) > 3 {
+		return strings.Join(ids[:3], ", ") + fmt.Sprintf(" +%d", len(ids)-3)
+	}
+	return strings.Join(ids, ", ")
+}
+
+func complianceFmtTime(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	return t.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+func complianceDownloadURL(repoName, framework, since, format string) string {
+	u := "/compliance/" + repoName + "?format=" + format
+	if framework != "" && framework != "all" {
+		u += "&framework=" + framework
+	} else {
+		u += "&framework=all"
+	}
+	if since != "" {
+		u += "&since=" + since
+	}
+	return u
+}
+
+// CompliancePage renders the /compliance/{repo} HTML report.
+templ CompliancePage(d CompliancePageData) {
+	@Page("Compliance Report — "+d.RepoName, d.Login, d.Avatar) {
+		if d.Report == nil {
+			<div class="page-header">
+				<h2>Compliance Report</h2>
+				<p><a href="/dashboard">← Dashboard</a></p>
+			</div>
+			<p style="color:var(--fg2)">No report data available.</p>
+		} else {
+			@complianceBody(d)
+		}
+	}
+}
+
+templ complianceBody(d CompliancePageData) {
+	// Chain broken banner — shown BEFORE everything else
+	if !d.Report.Data.ChainAttestation.OK {
+		<div style="background:#fce8e6;border:1.5px solid #c00;border-radius:10px;padding:16px 20px;margin-bottom:24px;color:#c00">
+			<strong>⚠ AUDIT CHAIN INTEGRITY FAILURE</strong>
+			<p style="margin:6px 0 0;font-size:14px">
+				The tamper-evident audit hash chain is broken. This report cannot be submitted as trustworthy compliance evidence.
+				if d.Report.Data.ChainAttestation.BrokenAtID != "" {
+					<br/>
+					<span style="font-family:var(--mono);font-size:12px">First broken event: { d.Report.Data.ChainAttestation.BrokenAtID }</span>
+				}
+			</p>
+		</div>
+	}
+
+	// Header
+	<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:24px">
+		<div>
+			<h2>Compliance Report</h2>
+			<p>
+				<a href="/dashboard">← Dashboard</a>
+				if d.RepoName != "" {
+					· <span style="font-family:var(--mono);font-size:13px">{ d.RepoName }</span>
+				}
+				· { complianceFwLabel(d.Report.Data.Framework, d.Report.Data.FrameworkVersions) }
+			</p>
+			<p style="color:var(--fg2);font-size:12px;margin-top:4px">
+				Generated { complianceFmtTime(d.Report.GenerationTs) }
+				· TASS { d.Report.TassVersion }
+				· Hash: <span style="font-family:var(--mono)">{ d.Report.ReportHash[:16] }…</span>
+			</p>
+		</div>
+		<div style="display:flex;gap:8px;flex-wrap:wrap">
+			<a href={ templ.SafeURL(complianceDownloadURL(d.RepoName, d.Framework, d.Since, "pdf")) }
+				class="btn" style="padding:6px 14px;font-size:13px">PDF ↓</a>
+			<a href={ templ.SafeURL(complianceDownloadURL(d.RepoName, d.Framework, d.Since, "json")) }
+				class="btn" style="padding:6px 14px;font-size:13px">JSON ↓</a>
+			<a href={ templ.SafeURL(complianceDownloadURL(d.RepoName, d.Framework, d.Since, "md")) }
+				class="btn" style="padding:6px 14px;font-size:13px">MD ↓</a>
+		</div>
+	</div>
+
+	// --- 1. Executive Summary ---
+	<div class="section-title">Executive Summary</div>
+	<div class="stats-grid" style="margin-bottom:28px">
+		<div class="stat-card">
+			<div class="stat-val">{ fmt.Sprintf("%d", d.Report.Data.Summary.TotalScans) }</div>
+			<div class="stat-label">Total scans</div>
+		</div>
+		<div class="stat-card">
+			<div class="stat-val" style="color:#1a7f37">{ fmt.Sprintf("%d", d.Report.Data.Summary.ConfirmedCount) }</div>
+			<div class="stat-label">Confirmed</div>
+		</div>
+		<div class="stat-card">
+			<div class="stat-val" style="color:#c00">{ fmt.Sprintf("%d", d.Report.Data.Summary.RevertedCount) }</div>
+			<div class="stat-label">Reverted</div>
+		</div>
+		<div class="stat-card">
+			<div class="stat-val" style={ complianceUnconfirmedStyle(d.Report.Data.Summary.UnconfirmedCount) }>
+				{ fmt.Sprintf("%d", d.Report.Data.Summary.UnconfirmedCount) }
+			</div>
+			<div class="stat-label">Unreviewed</div>
+		</div>
+	</div>
+
+	// --- 2. Detected Capabilities ---
+	<div class="section-title">Detected Capabilities ({ fmt.Sprintf("%d", len(d.Report.Data.Capabilities)) })</div>
+	if len(d.Report.Data.Capabilities) == 0 {
+		<p style="color:var(--fg2);padding:12px 0 24px">No capabilities detected.</p>
+	} else {
+		<div class="table-wrap" style="margin-bottom:28px">
+			<table>
+				<thead>
+					<tr>
+						<th>Capability</th>
+						<th>Category</th>
+						<th>Decision</th>
+						<th>Confirmed by</th>
+						<th>Controls</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, cap := range d.Report.Data.Capabilities {
+						<tr>
+							<td>
+								<div style="font-weight:500;margin-bottom:2px">{ cap.Name }</div>
+								<div style="font-family:var(--mono);font-size:11px;color:var(--fg2)">{ complianceShortID(cap.ID) }</div>
+							</td>
+							<td>
+								<span class={ "cap-badge " + complianceCatClass(cap.Category) }>
+									{ complianceCatLabel(cap.Category) }
+								</span>
+							</td>
+							<td>
+								<span class="status-pill" style={ complianceDecisionStyle(cap.Decision) }>
+									{ complianceDecisionLabel(cap.Decision) }
+								</span>
+							</td>
+							<td style="font-family:var(--mono);font-size:12px">
+								if cap.ConfirmedBy != "" {
+									{ "@" + cap.ConfirmedBy }
+								} else {
+									<span style="color:var(--fg2)">—</span>
+								}
+							</td>
+							<td style="font-family:var(--mono);font-size:11px;color:var(--fg2)">
+								{ complianceControlSummary(cap.ControlRefs) }
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+
+	// --- 3. Unconfirmed / Residual Risk ---
+	if len(d.Report.Data.Unconfirmed) > 0 {
+		<div style="background:var(--orange-bg,#fff8e1);border:1px solid #f0ad4e;border-radius:10px;padding:14px 18px;margin-bottom:20px">
+			<strong>⚠ Action Required — { fmt.Sprintf("%d", len(d.Report.Data.Unconfirmed)) } unreviewed { pluralCapability(len(d.Report.Data.Unconfirmed)) }</strong>
+			<p style="margin:4px 0 0;font-size:13px;color:var(--fg2)">These capabilities have not been confirmed or reverted. They represent residual risk that should be addressed before using this report as evidence.</p>
+		</div>
+		<div class="table-wrap" style="margin-bottom:28px">
+			<table>
+				<thead>
+					<tr>
+						<th>Capability</th>
+						<th>Category</th>
+						<th>Controls</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, cap := range d.Report.Data.Unconfirmed {
+						<tr>
+							<td>
+								<div style="font-weight:500">{ cap.Name }</div>
+								<div style="font-family:var(--mono);font-size:11px;color:var(--fg2)">{ complianceShortID(cap.ID) }</div>
+							</td>
+							<td>
+								<span class={ "cap-badge " + complianceCatClass(cap.Category) }>
+									{ complianceCatLabel(cap.Category) }
+								</span>
+							</td>
+							<td style="font-family:var(--mono);font-size:11px;color:var(--fg2)">
+								{ complianceControlSummary(cap.ControlRefs) }
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	} else {
+		<div style="background:var(--green-bg,#e6f4ea);border:1px solid #1a7f37;border-radius:10px;padding:12px 18px;margin-bottom:28px;color:#1a7f37;font-size:14px">
+			✅ All { fmt.Sprintf("%d", d.Report.Data.Summary.TotalCapabilities) } detected { pluralCapability(d.Report.Data.Summary.TotalCapabilities) } reviewed.
+		</div>
+	}
+
+	// --- 4. Control Coverage Matrix ---
+	<div class="section-title">Control Coverage Matrix ({ fmt.Sprintf("%d", len(d.Report.Data.ControlMatrix)) } controls)</div>
+	if len(d.Report.Data.ControlMatrix) == 0 {
+		<p style="color:var(--fg2);padding:12px 0 24px">No capabilities mapped to controls.</p>
+	} else {
+		<div class="table-wrap" style="margin-bottom:28px">
+			<table>
+				<thead>
+					<tr>
+						<th>Framework</th>
+						<th>Control ID</th>
+						<th>Evidence</th>
+						<th>Capabilities</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, entry := range d.Report.Data.ControlMatrix {
+						<tr>
+							<td style="font-family:var(--mono);font-size:12px;color:var(--fg2)">{ entry.Framework }</td>
+							<td style="font-family:var(--mono);font-size:13px;font-weight:500">{ entry.ControlID }</td>
+							<td>
+								if entry.HasEvidence {
+									<span style="color:#1a7f37;font-size:13px">✓ Confirmed</span>
+								} else {
+									<span style="color:#f0ad4e;font-size:13px">⚠ None confirmed</span>
+								}
+							</td>
+							<td style="font-size:13px;color:var(--fg2)">{ fmt.Sprintf("%d", len(entry.CapabilityIDs)) }</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+
+	// --- 5. TASS Product Controls ---
+	if len(d.Report.Data.TassControls) > 0 {
+		<div class="section-title">TASS Product Controls — Self-Attestation</div>
+		<div class="table-wrap" style="margin-bottom:28px">
+			<table>
+				<thead>
+					<tr>
+						<th>Control</th>
+						<th>Implemented by</th>
+						<th>Control IDs</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, tc := range d.Report.Data.TassControls {
+						<tr>
+							<td style="font-weight:500">{ tc.Name }</td>
+							<td style="font-family:var(--mono);font-size:12px">{ tc.ImplementedBy }</td>
+							<td style="font-family:var(--mono);font-size:11px;color:var(--fg2)">
+								{ complianceControlSummary(tc.ControlRefs) }
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+
+	// --- 6. Audit Chain Attestation ---
+	<div class="section-title">Audit Chain Attestation</div>
+	<div style="background:var(--bg2);border:0.5px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:28px">
+		if d.Report.Data.ChainAttestation.OK {
+			<div style="color:#1a7f37;font-weight:600;margin-bottom:8px">✅ Chain intact</div>
+			<div style="font-size:13px;color:var(--fg2);margin-bottom:4px">
+				{ fmt.Sprintf("%d", d.Report.Data.ChainAttestation.CheckedCount) } events verified
+			</div>
+			<div style="font-family:var(--mono);font-size:12px;color:var(--fg2)">
+				Head hash: { d.Report.Data.ChainAttestation.ChainHeadHash }
+			</div>
+		} else {
+			<div style="color:#c00;font-weight:600;margin-bottom:8px">❌ Chain broken</div>
+			if d.Report.Data.ChainAttestation.BrokenAtID != "" {
+				<div style="font-family:var(--mono);font-size:12px;color:var(--fg2)">
+					First broken event: { d.Report.Data.ChainAttestation.BrokenAtID }
+				</div>
+			}
+		}
+	</div>
+
+	// --- 7. Framework Versions ---
+	if len(d.Report.Data.FrameworkVersions) > 0 {
+		<div class="section-title">Framework Versions</div>
+		<div class="table-wrap" style="margin-bottom:28px">
+			<table>
+				<thead>
+					<tr>
+						<th>Key</th>
+						<th>Framework</th>
+						<th>Authority</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, fv := range d.Report.Data.FrameworkVersions {
+						<tr>
+							<td style="font-family:var(--mono);font-size:12px">{ fv.Key }</td>
+							<td>{ fv.Name }</td>
+							<td style="font-size:12px;color:var(--fg2)">{ fv.Authority }</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+
+	// Footer
+	<div style="border-top:0.5px solid var(--border);padding-top:16px;margin-top:8px;font-size:12px;color:var(--fg2)">
+		<span style="font-family:var(--mono)">{ d.Report.ReportHash }</span>
+		· Generated { complianceFmtTime(d.Report.GenerationTs) }
+		· TASS { d.Report.TassVersion }
+	</div>
+}
+
+func complianceUnconfirmedStyle(n int) string {
+	if n > 0 {
+		return "color:#856404"
+	}
+	return "color:#1a7f37"
+}
+
+func complianceFwLabel(fw string, versions []compliance.FrameworkVersion) string {
+	if fw == "all" || fw == "" {
+		return "All Frameworks"
+	}
+	for _, v := range versions {
+		if v.Key == fw {
+			return v.Name
+		}
+	}
+	return strings.ToUpper(fw)
+}
+
+func pluralCapability(n int) string {
+	if n == 1 {
+		return "capability"
+	}
+	return "capabilities"
+}

@@ -41,6 +41,7 @@ templ Page(title, login, avatar string) {
 					<span>TASS</span>
 				</a>
 				<div class="topbar-right">
+					<a href="/docs">Docs</a>
 					if login != "" {
 						<a href="/dashboard">Dashboard</a>
 						<div class="avatar">{ userInitials(login) }</div>

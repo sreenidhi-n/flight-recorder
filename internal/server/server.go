@@ -62,13 +62,16 @@ type Handlers struct {
 	APIAuditVerify http.Handler // GET  /api/audit/chain/verify (Admin)
 	APIAuditNDJSON http.Handler // GET  /api/audit/events.ndjson (Admin)
 	APIPolicy      http.Handler // GET  /api/policy
-	APIImport     http.Handler // POST /api/import (CLI export / air-gap mode)
+	APIImport         http.Handler // POST /api/import (CLI export / air-gap mode)
+	APIRuntimeVerify  http.Handler // POST /api/runtime-verify (log-vs-manifest drift)
 	Compliance    http.Handler // GET  /compliance/ (Admin — compliance report)
 	Index         http.Handler // GET  /
 	VerifyPage    http.Handler // GET  /verify/
 	Dashboard     http.Handler // GET  /dashboard
 	RepoDashboard http.Handler // GET  /dashboard/repo
 	Audit         http.Handler // GET  /audit/
+	Graph         http.Handler // GET  /graph (admin-only capability graph)
+	Docs          http.Handler // GET  /docs  (public onboarding page)
 	Setup         http.Handler // GET  /setup
 	Static        http.Handler // GET  /static/
 	OAuthStart    http.Handler // GET  /auth/github
@@ -127,6 +130,7 @@ func BuildMux(h Handlers) *http.ServeMux {
 	mux.Handle("/api/audit", h.APIAudit)
 	mux.Handle("/api/policy", h.APIPolicy)
 	mux.Handle("/api/import", h.APIImport)
+	mux.Handle("/api/runtime-verify", RateLimitMiddleware(20, time.Minute, h.APIRuntimeVerify))
 	mux.Handle("/compliance/", h.Compliance)
 
 	// Web UI pages (authenticated)
@@ -134,6 +138,8 @@ func BuildMux(h Handlers) *http.ServeMux {
 	mux.Handle("/dashboard/repo", h.RepoDashboard)
 	mux.Handle("/dashboard", h.Dashboard)
 	mux.Handle("/audit/", h.Audit)
+	mux.Handle("/graph", h.Graph)
+	mux.Handle("/docs", h.Docs)
 	mux.Handle("/setup", h.Setup)
 	mux.Handle("/", h.Index)
 

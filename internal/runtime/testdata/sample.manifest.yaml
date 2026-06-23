@@ -1,0 +1,23 @@
+version: "1"
+generated_at: 2026-05-01T00:00:00Z
+repo: acme-corp/payments-service
+capabilities:
+  - id: ast:go:stripe:client:charge
+    name: "Stripe payments API (api.stripe.com)"
+    category: external_api
+    source: layer1_ast
+    status: confirmed
+    confirmed_by: alice
+    note: "api.stripe.com"
+  - id: ast:go:net/http:client:Post
+    name: "HTTP outbound POST"
+    category: network_access
+    source: layer1_ast
+    status: confirmed
+    confirmed_by: alice
+  - id: layer0:go:github.com/go-sql-driver/mysql:v1.7.0
+    name: "MySQL driver"
+    category: external_dependency
+    source: layer0_dependency
+    status: confirmed
+    confirmed_by: bob

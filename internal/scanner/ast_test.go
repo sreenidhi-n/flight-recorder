@@ -1,6 +1,7 @@
 package scanner_test
 
 import (
+	"strings"
 	"testing"
 
 	sitter "github.com/smacker/go-tree-sitter"
@@ -141,10 +142,10 @@ func Mul(a, b int) int { return a * b }
 	}
 }
 
-// TestASTScanner_Deduplication verifies the same call site is not reported twice.
-func TestASTScanner_Deduplication(t *testing.T) {
-	// Two calls to http.Get produce only one capability ID since the method
-	// is the same. The ID is stable regardless of how many call sites exist.
+// TestASTScanner_SameMethodTwice_DistinctIDs verifies that two call sites of the
+// same method within one file get distinct capability IDs via the #N suffix.
+// This is the BP-1 fix: previously the second occurrence was silently dropped.
+func TestASTScanner_SameMethodTwice_DistinctIDs(t *testing.T) {
 	src := []byte(`package main
 
 import "net/http"
@@ -157,12 +158,52 @@ func fetchB() { http.Get("https://b.example.com") }
 	if err != nil {
 		t.Fatalf("ScanBytes: %v", err)
 	}
-	// Both calls are http.Get → same ID → deduplicated to 1 capability.
-	if len(caps) != 1 {
-		t.Errorf("got %d capabilities, want 1 (deduplicated by ID)", len(caps))
+	// Two call sites to http.Get → two distinct IDs: plain + #2 suffix.
+	if len(caps) != 2 {
+		t.Fatalf("got %d capabilities, want 2 (distinct IDs per call site)", len(caps))
 	}
-	if caps[0].ID != "ast:go:net/http:client:Get" {
-		t.Errorf("ID: got %q", caps[0].ID)
+	ids := map[string]bool{}
+	for _, c := range caps {
+		ids[c.ID] = true
+	}
+	if !ids["ast:go:net/http:client:Get"] {
+		t.Error("missing first occurrence ID ast:go:net/http:client:Get")
+	}
+	if !ids["ast:go:net/http:client:Get#2"] {
+		t.Error("missing second occurrence ID ast:go:net/http:client:Get#2")
+	}
+}
+
+// TestASTScanner_ThreeSameMethod verifies the #N suffix increments correctly.
+func TestASTScanner_ThreeSameMethod(t *testing.T) {
+	src := []byte(`package main
+
+import "net/http"
+
+func a() { http.Post("https://a.example.com", "application/json", nil) }
+func b() { http.Post("https://b.example.com", "application/json", nil) }
+func c() { http.Post("https://c.example.com", "application/json", nil) }
+`)
+	s := scanner.NewASTScanner(buildHTTPRule(t))
+	caps, err := s.ScanBytes(src, "main.go", "go")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+	if len(caps) != 3 {
+		t.Fatalf("got %d capabilities, want 3", len(caps))
+	}
+	ids := map[string]bool{}
+	for _, c := range caps {
+		ids[c.ID] = true
+	}
+	for _, want := range []string{
+		"ast:go:net/http:client:Post",
+		"ast:go:net/http:client:Post#2",
+		"ast:go:net/http:client:Post#3",
+	} {
+		if !ids[want] {
+			t.Errorf("missing expected ID %q; got IDs: %v", want, ids)
+		}
 	}
 }
 
@@ -175,5 +216,88 @@ func TestASTScanner_UnknownLanguage(t *testing.T) {
 	}
 	if caps != nil {
 		t.Errorf("expected nil caps for unknown language, got %v", caps)
+	}
+}
+
+// buildExecRule compiles a rule equivalent to rules/go/exec_cmd.scm for testing.
+func buildExecRule(t *testing.T) map[string][]*scanner.Rule {
+	t.Helper()
+	const execQuery = `
+(call_expression
+  function: (selector_expression
+    operand: (identifier) @pkg
+    field: (field_identifier) @method)
+  (#match? @pkg "^exec$")
+  (#match? @method "^(Command|CommandContext)$"))`
+	q, err := sitter.NewQuery([]byte(execQuery), golang.GetLanguage())
+	if err != nil {
+		t.Fatalf("compile exec query: %v", err)
+	}
+	rule := &scanner.Rule{
+		Query:    q,
+		Language: "go",
+		Name:     "exec_cmd",
+		Meta: scanner.RuleMeta{
+			Category:      contracts.CatPrivilege,
+			Name:          "Subprocess execution",
+			Confidence:    0.95,
+			CapID:         "os/exec:cmd",
+			SymbolCapture: "method",
+		},
+	}
+	return map[string][]*scanner.Rule{"go": {rule}}
+}
+
+// TestASTScanner_EnclosingFuncContext verifies that RawEvidence includes the
+// enclosing function name when a capability is detected inside a named function (BP-2).
+func TestASTScanner_EnclosingFuncContext(t *testing.T) {
+	src := []byte(`package main
+
+import "os/exec"
+
+func processRequest(cmd string) {
+	exec.Command(cmd)
+}
+`)
+	s := scanner.NewASTScanner(buildExecRule(t))
+	caps, err := s.ScanBytes(src, "handler.go", "go")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+	if len(caps) == 0 {
+		t.Fatal("expected at least 1 capability")
+	}
+	ev := caps[0].RawEvidence
+	if ev == "" {
+		t.Fatal("RawEvidence should not be empty")
+	}
+	const wantSubstr = "in func processRequest"
+	if !strings.Contains(ev, wantSubstr) {
+		t.Errorf("RawEvidence %q should contain %q", ev, wantSubstr)
+	}
+}
+
+// TestASTScanner_TopLevelLogsFuncContext verifies the enclosing func is captured
+// inside a named function and only the method name is used at the top level.
+func TestASTScanner_TopLevelLogsFuncContext(t *testing.T) {
+	src := []byte(`package main
+
+import "net/http"
+
+func doWork() {
+	http.Get("https://example.com")
+}
+`)
+	s := scanner.NewASTScanner(buildHTTPRule(t))
+	caps, err := s.ScanBytes(src, "main.go", "go")
+	if err != nil {
+		t.Fatalf("ScanBytes: %v", err)
+	}
+	if len(caps) == 0 {
+		t.Fatal("expected 1 capability")
+	}
+	// Inside a named function → RawEvidence should include "in func doWork".
+	if !strings.Contains(caps[0].RawEvidence, "in func doWork") {
+		t.Errorf("RawEvidence %q should contain 'in func doWork'", caps[0].RawEvidence)
 	}
 }

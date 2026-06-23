@@ -236,8 +236,10 @@ func (v *Verifier) Decide(
 			)
 		}
 
+		// No details_url on the final update — all caps are decided, so the
+		// verify page is no longer actionable. Empty string omits the field.
 		if err := v.app.UpdateCheckRun(ctx, token, owner, repoName,
-			scan.CheckRunID, conclusion, title, summary); err != nil {
+			scan.CheckRunID, conclusion, title, summary, ""); err != nil {
 			log.Error("verifier: update check run", "error", err)
 		} else {
 			result.CheckUpdated = true
@@ -300,6 +302,11 @@ func (v *Verifier) commitManifest(
 	// Add confirmed capabilities as new entries
 	now := time.Now().UTC()
 	for _, cap := range confirmedCaps {
+		// Use merged Locations when available; fall back to the primary Location.
+		locs := cap.Locations
+		if len(locs) == 0 {
+			locs = []contracts.CodeLocation{cap.Location}
+		}
 		entry := manifest.ManifestEntry{
 			ID:          cap.ID,
 			Name:        cap.Name,
@@ -307,7 +314,7 @@ func (v *Verifier) commitManifest(
 			Source:      cap.Source,
 			Status:      "confirmed",
 			ConfirmedAt: &now,
-			Locations:   []contracts.CodeLocation{cap.Location},
+			Locations:   locs,
 		}
 		// Remove any existing entry with this ID (idempotent re-confirm)
 		m.Capabilities = removeEntry(m.Capabilities, cap.ID)

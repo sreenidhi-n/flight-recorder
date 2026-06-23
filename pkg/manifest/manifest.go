@@ -127,6 +127,13 @@ func FromCapabilitySet(cs contracts.CapabilitySet, repo string) *Manifest {
 	entries := make([]ManifestEntry, 0, len(cs.Capabilities))
 	for _, cap := range cs.Capabilities {
 		firstDetected := now
+		// Use the merged Locations slice when available (populated by the scanner
+		// when the same cap ID appears in multiple files). Fall back to the single
+		// primary Location for capabilities detected in only one file.
+		locs := cap.Locations
+		if len(locs) == 0 {
+			locs = []contracts.CodeLocation{cap.Location}
+		}
 		entries = append(entries, ManifestEntry{
 			ID:            cap.ID,
 			Name:          cap.Name,
@@ -134,7 +141,7 @@ func FromCapabilitySet(cs contracts.CapabilitySet, repo string) *Manifest {
 			Source:        cap.Source,
 			FirstDetected: &firstDetected,
 			Status:        "auto_detected",
-			Locations:     []contracts.CodeLocation{cap.Location},
+			Locations:     locs,
 		})
 	}
 	return &Manifest{

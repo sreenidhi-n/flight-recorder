@@ -10,6 +10,7 @@ import (
 	"github.com/tass-security/tass/internal/auth"
 	"github.com/tass-security/tass/internal/compliance"
 	"github.com/tass-security/tass/internal/storage"
+	"github.com/tass-security/tass/internal/ui/templates"
 )
 
 // ComplianceHandler serves GET /compliance/:repo
@@ -82,9 +83,7 @@ func (h *ComplianceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		framework = "all"
 	}
 	format := r.URL.Query().Get("format")
-	if format == "" {
-		format = "md"
-	}
+	since := r.URL.Query().Get("since")
 
 	gen := compliance.NewGenerator(h.store, h.version)
 	report, genErr := gen.Generate(r.Context(), repoFullName, framework, nil)
@@ -98,42 +97,66 @@ func (h *ComplianceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Emit audit event BEFORE returning the report (spec requirement).
 	_ = h.emitter.Emit(r.Context(), audit.ActionComplianceReportGenerated, repoFullName, nil, map[string]string{
-		"framework":     framework,
-		"format":        format,
-		"chain_intact":  fmt.Sprintf("%v", !chainBroken),
-		"report_hash":   report.ReportHash,
+		"framework":    framework,
+		"format":       format,
+		"chain_intact": fmt.Sprintf("%v", !chainBroken),
+		"report_hash":  report.ReportHash,
 	})
-
-	var (
-		body        []byte
-		contentType string
-		err         error
-	)
-	switch format {
-	case "json":
-		contentType = "application/json"
-		body, err = report.ToJSON()
-	case "pdf":
-		contentType = "application/pdf"
-		body, err = report.ToPDF()
-		w.Header().Set("Content-Disposition",
-			fmt.Sprintf(`attachment; filename="tass-compliance-%s.pdf"`, strings.ReplaceAll(repoFullName, "/", "-")))
-	default:
-		contentType = "text/markdown; charset=utf-8"
-		body = []byte(report.ToMarkdown())
-	}
-	if err != nil {
-		http.Error(w, fmt.Sprintf("render %s: %v", format, err), http.StatusInternalServerError)
-		return
-	}
 
 	status := http.StatusOK
 	if chainBroken {
-		status = http.StatusMultiStatus // 207: partial content (chain broken)
+		status = http.StatusMultiStatus
 		w.Header().Set("X-TASS-Chain-Integrity", "broken")
 	}
 
-	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
+	// HTML is the default — explicit format= selects download formats.
+	switch format {
+	case "json":
+		body, err := report.ToJSON()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("render json: %v", err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write(body)
+
+	case "pdf":
+		body, err := report.ToPDF()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("render pdf: %v", err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf(`attachment; filename="tass-compliance-%s.pdf"`, strings.ReplaceAll(repoFullName, "/", "-")))
+		w.WriteHeader(status)
+		_, _ = w.Write(body)
+
+	case "md":
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf(`attachment; filename="tass-compliance-%s.md"`, strings.ReplaceAll(repoFullName, "/", "-")))
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(report.ToMarkdown()))
+
+	default:
+		// HTML — rendered via Templ template.
+		var login, avatar string
+		if sess := auth.SessionFromStore(h.sessions, r); sess != nil {
+			login = sess.GitHubLogin
+			avatar = sess.AvatarURL
+		}
+		pageData := templates.CompliancePageData{
+			Login:     login,
+			Avatar:    avatar,
+			Report:    report,
+			RepoName:  repoFullName,
+			Framework: framework,
+			Since:     since,
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(status)
+		_ = templates.CompliancePage(pageData).Render(r.Context(), w)
+	}
 }

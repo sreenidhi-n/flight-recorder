@@ -95,8 +95,11 @@ func (s *ASTScanner) ScanBytes(content []byte, filename, lang string) ([]contrac
 
 	root := tree.RootNode()
 	var caps []contracts.Capability
-	// seen deduplicates by capability ID within a single file scan.
-	seen := make(map[string]struct{})
+	// seenCount tracks how many times each base capability ID has appeared in
+	// this file. The first occurrence keeps the plain ID; subsequent occurrences
+	// get a "#N" positional suffix so that two http.Post calls in the same file
+	// produce distinct, independently-reviewable capability IDs.
+	seenCount := make(map[string]int)
 
 	for _, rule := range langRules {
 		cursor := sitter.NewQueryCursor()
@@ -121,14 +124,25 @@ func (s *ASTScanner) ScanBytes(content []byte, filename, lang string) ([]contrac
 				continue
 			}
 
-			capID := fmt.Sprintf("ast:%s:%s:%s", lang, rule.Meta.CapID, symbol)
-			if _, dup := seen[capID]; dup {
-				continue
+			baseID := fmt.Sprintf("ast:%s:%s:%s", lang, rule.Meta.CapID, symbol)
+			seenCount[baseID]++
+			capID := baseID
+			if seenCount[baseID] > 1 {
+				capID = fmt.Sprintf("%s#%d", baseID, seenCount[baseID])
 			}
-			seen[capID] = struct{}{}
 
 			// Use the symbol capture node's position for the location.
+			symbolNode := captureNode(match.Captures, rule.Meta.SymbolCapture, rule.Query)
 			loc := captureLocation(match.Captures, rule.Meta.SymbolCapture, rule.Query, filename)
+
+			// Enrich RawEvidence with the enclosing function name so reviewers
+			// have call-site context without leaving the verify card (BP-2).
+			rawEvidence := symbol
+			if symbolNode != nil {
+				if funcName := enclosingFuncName(symbolNode, content); funcName != "" {
+					rawEvidence = symbol + " in func " + funcName
+				}
+			}
 
 			caps = append(caps, contracts.Capability{
 				ID:          capID,
@@ -137,7 +151,7 @@ func (s *ASTScanner) ScanBytes(content []byte, filename, lang string) ([]contrac
 				Source:      contracts.LayerAST,
 				Location:    loc,
 				Confidence:  rule.Meta.Confidence,
-				RawEvidence: symbol,
+				RawEvidence: rawEvidence,
 			})
 		}
 	}
@@ -165,6 +179,16 @@ func captureText(captures []sitter.QueryCapture, name string, q *sitter.Query, s
 	return ""
 }
 
+// captureNode returns the tree-sitter Node for the first capture with the given name.
+func captureNode(captures []sitter.QueryCapture, name string, q *sitter.Query) *sitter.Node {
+	for _, c := range captures {
+		if q.CaptureNameForId(c.Index) == name {
+			return c.Node
+		}
+	}
+	return nil
+}
+
 // captureLocation returns a CodeLocation for the first capture with the given name.
 func captureLocation(captures []sitter.QueryCapture, name string, q *sitter.Query, filename string) contracts.CodeLocation {
 	for _, c := range captures {
@@ -178,4 +202,32 @@ func captureLocation(captures []sitter.QueryCapture, name string, q *sitter.Quer
 		}
 	}
 	return contracts.CodeLocation{File: filename}
+}
+
+// enclosingFuncName walks the parent chain of node (up to maxDepth levels)
+// looking for a function_declaration or method_declaration node, and returns
+// the name identifier's text. Returns empty string for top-level code or when
+// no enclosing function is found within the depth limit.
+func enclosingFuncName(node *sitter.Node, src []byte) string {
+	const maxDepth = 20
+	cur := node.Parent()
+	for depth := 0; cur != nil && depth < maxDepth; depth++ {
+		switch cur.Type() {
+		case "function_declaration", "method_declaration",
+			"function_definition", // Python
+			"function_expression", "arrow_function": // JavaScript
+			// The name child has type "identifier" or "field_identifier".
+			for i := 0; i < int(cur.ChildCount()); i++ {
+				child := cur.Child(i)
+				if child.Type() == "identifier" || child.Type() == "field_identifier" {
+					name := child.Content(src)
+					if name != "" {
+						return name
+					}
+				}
+			}
+		}
+		cur = cur.Parent()
+	}
+	return ""
 }

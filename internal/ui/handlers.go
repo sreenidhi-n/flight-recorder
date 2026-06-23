@@ -4,6 +4,7 @@ package ui
 
 import (
 	"embed"
+	"encoding/csv"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -56,6 +57,24 @@ func (h *IndexHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render(w, r, http.StatusOK, templates.Index())
+}
+
+// DocsHandler serves GET /docs — public onboarding 1-pager.
+type DocsHandler struct {
+	sessions *auth.SessionStore
+}
+
+func NewDocsHandler(sessions *auth.SessionStore) *DocsHandler {
+	return &DocsHandler{sessions: sessions}
+}
+
+func (h *DocsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var login, avatar string
+	if sess := auth.SessionFromStore(h.sessions, r); sess != nil {
+		login = sess.GitHubLogin
+		avatar = sess.AvatarURL
+	}
+	render(w, r, http.StatusOK, templates.Docs(templates.DocsPageData{Login: login, Avatar: avatar}))
 }
 
 // VerifyPageHandler serves GET /verify/{scan-id}.
@@ -171,7 +190,9 @@ func (h *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// RBAC: org dashboard requires maintain/admin on at least one repo in the installation.
+	// RBAC: org dashboard requires Developer (triage+) on at least one repo.
+	// Errors from the GitHub API (e.g. private repos we can't reach) are treated as
+	// non-fatal — we allow through and let per-page RBAC handle sensitive actions.
 	if h.rbacCache != nil && h.fetchPerm != nil && instID > 0 {
 		repos, rerr := h.store.ListRepositoriesByInstallation(ctx, instID)
 		if rerr != nil {
@@ -181,12 +202,12 @@ func (h *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			for i := range repos {
 				names[i] = repos[i].FullName
 			}
-			ok, _ := auth.HasMinRoleOnAnyRepo(ctx, sess.GitHubLogin, sess.AccessToken, names, auth.RoleAdmin, h.rbacCache, h.fetchPerm)
+			ok, _ := auth.HasMinRoleOnAnyRepo(ctx, sess.GitHubLogin, sess.AccessToken, names, auth.RoleDeveloper, h.rbacCache, h.fetchPerm)
 			if !ok {
 				slog.Warn("dashboard: rbac denied", "login", sess.GitHubLogin, "installation_id", instID)
 				render(w, r, http.StatusForbidden,
 					templates.ErrorPage(sess.GitHubLogin, sess.AvatarURL,
-						"The dashboard is limited to maintainers and admins on at least one repository where TASS is installed."))
+						"The dashboard is limited to contributors and above on at least one repository where TASS is installed."))
 				return
 			}
 		}
@@ -217,6 +238,24 @@ func (h *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.Error("dashboard: get recent scans", "installation_id", instID, "error", err)
 		} else {
 			data.RecentScans = recentScans
+		}
+
+		repoStats, err := h.store.GetRepoStatsByInstallation(ctx, instID)
+		if err != nil {
+			slog.Error("dashboard: get repo stats", "installation_id", instID, "error", err)
+		} else {
+			rows := make([]templates.RepoStatRow, len(repoStats))
+			for i, rs := range repoStats {
+				rows[i] = templates.RepoStatRow{
+					FullName:     rs.FullName,
+					RepoID:       rs.RepoID,
+					TotalScans:   rs.TotalScans,
+					TotalCaps:    rs.TotalCaps,
+					ConfirmCount: rs.ConfirmCount,
+					RevertCount:  rs.RevertCount,
+				}
+			}
+			data.RepoStatsList = rows
 		}
 	}
 
@@ -524,6 +563,148 @@ func (h *AuditPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render(w, r, http.StatusOK, templates.Audit(data))
+}
+
+// GraphPageHandler serves GET /graph — cross-repo confirmed capability table.
+// Admin-only: requires RoleAdmin on at least one repo in the installation.
+type GraphPageHandler struct {
+	store     storage.Store
+	sessions  *auth.SessionStore
+	rbacCache *auth.PermCache
+	fetchPerm auth.PermFetcher
+}
+
+func NewGraphPageHandler(store storage.Store, sessions *auth.SessionStore, rbacCache *auth.PermCache, fetchPerm auth.PermFetcher) *GraphPageHandler {
+	return &GraphPageHandler{store: store, sessions: sessions, rbacCache: rbacCache, fetchPerm: fetchPerm}
+}
+
+func (h *GraphPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	sess := auth.SessionFrom(r)
+	if sess == nil {
+		http.Redirect(w, r, "/auth/github?return_to="+r.URL.RequestURI(), http.StatusFound)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Resolve installation
+	instIDStr := r.URL.Query().Get("installation_id")
+	var instID int64
+	if instIDStr != "" {
+		instID, _ = strconv.ParseInt(instIDStr, 10, 64)
+	}
+	if instID == 0 {
+		inst, _ := h.store.GetInstallationByLogin(ctx, sess.GitHubLogin)
+		if inst != nil {
+			instID = inst.ID
+		}
+	}
+
+	// RBAC: require Admin on at least one repo in the installation.
+	if h.rbacCache != nil && h.fetchPerm != nil && instID > 0 {
+		repos, err := h.store.ListRepositoriesByInstallation(ctx, instID)
+		if err != nil || len(repos) == 0 {
+			render(w, r, http.StatusForbidden,
+				templates.ErrorPage(sess.GitHubLogin, sess.AvatarURL,
+					"No repositories found for this installation."))
+			return
+		}
+		names := make([]string, len(repos))
+		for i := range repos {
+			names[i] = repos[i].FullName
+		}
+		ok, _ := auth.HasMinRoleOnAnyRepo(ctx, sess.GitHubLogin, sess.AccessToken, names, auth.RoleAdmin, h.rbacCache, h.fetchPerm)
+		if !ok {
+			slog.Warn("graph: rbac denied", "login", sess.GitHubLogin)
+			render(w, r, http.StatusForbidden,
+				templates.ErrorPage(sess.GitHubLogin, sess.AvatarURL,
+					"The capability graph is visible to repository admins only."))
+			return
+		}
+	}
+
+	// Parse filters from query params
+	q := r.URL.Query()
+	filterCats := q["category"]
+	filterRepos := q["repo"]
+	filterFrom := q.Get("from")
+	filterTo := q.Get("to")
+	filterBy := q.Get("by")
+	filterSearch := q.Get("q")
+	format := q.Get("format")
+
+	var from, to time.Time
+	if filterFrom != "" {
+		if t, err := time.Parse("2006-01-02", filterFrom); err == nil {
+			from = t
+		}
+	}
+	if filterTo != "" {
+		if t, err := time.Parse("2006-01-02", filterTo); err == nil {
+			to = t.Add(24*time.Hour - time.Second)
+		}
+	}
+
+	filter := storage.ConfirmedCapabilityFilter{
+		Categories:  filterCats,
+		RepoNames:   filterRepos,
+		From:        from,
+		To:          to,
+		ConfirmedBy: filterBy,
+		Search:      filterSearch,
+	}
+
+	caps, err := h.store.GetConfirmedCapabilities(ctx, instID, filter)
+	if err != nil {
+		slog.Error("graph: get confirmed capabilities", "error", err)
+		caps = nil
+	}
+
+	// CSV export
+	if format == "csv" {
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="tass-capabilities.csv"`)
+		enc := csv.NewWriter(w)
+		_ = enc.Write([]string{"repo", "capability", "category", "endpoint", "confirmed_by", "confirmed_at"})
+		for _, cap := range caps {
+			_ = enc.Write([]string{
+				cap.RepoFullName,
+				cap.Name,
+				cap.Category,
+				func() string {
+					if cap.LocationFile != "" {
+						return cap.LocationFile
+					}
+					return cap.Evidence
+				}(),
+				cap.ConfirmedBy,
+				cap.ConfirmedAt.UTC().Format(time.RFC3339),
+			})
+		}
+		enc.Flush()
+		return
+	}
+
+	allRepos, _ := h.store.ListRepoNamesForInstallation(ctx, instID)
+
+	data := templates.GraphPageData{
+		Login:            sess.GitHubLogin,
+		Avatar:           sess.AvatarURL,
+		AllRepos:         allRepos,
+		FilterCategories: filterCats,
+		FilterRepos:      filterRepos,
+		FilterFrom:       filterFrom,
+		FilterTo:         filterTo,
+		FilterBy:         filterBy,
+		FilterSearch:     filterSearch,
+		Capabilities:     caps,
+	}
+
+	if r.Header.Get("HX-Request") == "true" {
+		render(w, r, http.StatusOK, templates.GraphTable(data))
+		return
+	}
+	render(w, r, http.StatusOK, templates.Graph(data))
 }
 
 func fromRFC3339(t time.Time) string {

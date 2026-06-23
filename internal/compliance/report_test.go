@@ -404,6 +404,9 @@ func (s *testStore) GetStatsByInstallation(_ context.Context, _ int64) (*storage
 func (s *testStore) GetRecentScans(_ context.Context, _ int64, _ int) ([]storage.RecentScan, error) {
 	return nil, nil
 }
+func (s *testStore) GetRepoStatsByInstallation(_ context.Context, _ int64) ([]storage.RepoStatSummary, error) {
+	return nil, nil
+}
 func (s *testStore) SaveManifestSnapshot(_ context.Context, _ storage.ManifestSnapshot) error {
 	return nil
 }
@@ -418,4 +421,10 @@ func (s *testStore) GetAuditEvents(_ context.Context, _ int64, _ string, _, _ in
 	return nil, nil
 }
 func (s *testStore) GetLastAuditHash(_ context.Context, _ int64) (string, error) { return "", nil }
-func (s *testStore) Close() error                                                  { return nil }
+func (s *testStore) GetConfirmedCapabilities(_ context.Context, _ int64, _ storage.ConfirmedCapabilityFilter) ([]storage.ConfirmedCapability, error) {
+	return nil, nil
+}
+func (s *testStore) ListRepoNamesForInstallation(_ context.Context, _ int64) ([]string, error) {
+	return nil, nil
+}
+func (s *testStore) Close() error { return nil }

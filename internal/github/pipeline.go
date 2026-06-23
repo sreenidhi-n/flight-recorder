@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tass-security/tass/internal/contract"
 	"github.com/tass-security/tass/internal/scanner"
 	"github.com/tass-security/tass/internal/storage"
 	"github.com/tass-security/tass/pkg/contracts"
@@ -154,6 +155,20 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 		log.Info("pipeline: loaded .tassignore", "bytes", len(tassIgnoreContent))
 	}
 
+	// --- 7c. Fetch tass.contract.yaml from base branch (optional) ---
+	// Fetched from BaseSHA so the contract cannot be bypassed by updating it
+	// in the same PR as the capability being blocked.
+	var activeContract *contract.Contract
+	if contractBytes, cerr := p.app.FetchFileContent(
+		ctx, token, owner, repo, "tass.contract.yaml", req.BaseSHA); cerr == nil && contractBytes != nil {
+		if activeContract, cerr = contract.Load(contractBytes); cerr != nil {
+			log.Warn("pipeline: could not parse tass.contract.yaml, contract check skipped", "error", cerr)
+			activeContract = nil
+		} else {
+			log.Info("pipeline: loaded tass.contract.yaml", "service", activeContract.Service)
+		}
+	}
+
 	// --- 8. Run scanner ---
 	capSet, err := p.sc.ScanRemote(headFiles, baseDeps, tassIgnoreContent)
 	if err != nil {
@@ -173,12 +188,46 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 	}
 	log.Info("pipeline: diff complete", "novel_capabilities", len(novelCaps))
 
+	// --- 9b. Contract check — mark hard-block violations on novel capabilities ---
+	var contractViolations []contract.Violation
+	if activeContract != nil && len(novelCaps) > 0 {
+		contractViolations = activeContract.Check(novelCaps)
+		if len(contractViolations) > 0 {
+			// Mark individual capabilities that have per-cap violations.
+			violatedIDs := contract.ViolatedIDs(contractViolations)
+			for i := range novelCaps {
+				if reason, ok := violatedIDs[novelCaps[i].ID]; ok {
+					novelCaps[i].ContractViolated = true
+					novelCaps[i].ContractViolationReason = reason
+				}
+			}
+			log.Info("pipeline: contract violations found", "count", len(contractViolations))
+		}
+	}
+
 	// --- 10. Build scan ID and store result ---
 	scanID := fmt.Sprintf("scan-%s-%d-%s", sanitize(req.RepoFullName), req.PRNumber, req.HeadSHA[:8])
 	durationMS := time.Since(start).Milliseconds()
 
+	// --- 10b. AI-signature detection (metadata heuristics only — no AST) ---
+	// Fetch the PR's commit list so we can inspect commit message trailers.
+	// Non-fatal: if the API call fails we continue with no AI signal.
+	var aiCommits []CommitMeta
+	if prCommits, cerr := p.app.FetchPRCommits(ctx, token, owner, repo, req.PRNumber); cerr != nil {
+		log.Warn("pipeline: fetch PR commits for AI detection", "error", cerr)
+	} else {
+		aiCommits = prCommits
+	}
+	aiSig := DetectAI(req.PRAuthorLogin, aiCommits, req.PRLinesChanged)
+	if aiSig.IsAIGenerated {
+		log.Info("pipeline: AI-generated PR detected",
+			"author", req.PRAuthorLogin,
+			"signals", aiSig.Signals,
+		)
+	}
+
 	// --- 11. Post PR comment ---
-	commentBody := RenderComment(scanID, novelCaps, p.baseURL)
+	commentBody := RenderComment(scanID, novelCaps, contractViolations, p.baseURL, aiSig)
 	commentID, err := p.app.CreateOrUpdateComment(ctx, token, owner, repo, req.PRNumber, commentBody)
 	if err != nil {
 		log.Error("pipeline: post PR comment", "error", err)
@@ -190,11 +239,20 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 	// --- 12. Update check run ---
 	if checkRunID != 0 {
 		conclusion := ConclusionSuccess
-		if len(novelCaps) > 0 {
+		if len(contractViolations) > 0 {
+			// Contract violations are hard failures — cannot be resolved by review
+			conclusion = ConclusionFailure
+		} else if len(novelCaps) > 0 {
 			conclusion = ConclusionActionRequired
 		}
 		title, summary := CheckSummary(len(novelCaps), scanID, p.baseURL)
-		if err := p.app.UpdateCheckRun(ctx, token, owner, repo, checkRunID, conclusion, title, summary); err != nil {
+		// Set details_url so the GitHub "Details" button links directly to the
+		// TASS verify page for this scan. Empty string = no details link.
+		detailsURL := ""
+		if len(novelCaps) > 0 {
+			detailsURL = p.baseURL + "/verify/" + scanID
+		}
+		if err := p.app.UpdateCheckRun(ctx, token, owner, repo, checkRunID, conclusion, title, summary, detailsURL); err != nil {
 			log.Error("pipeline: update check run", "error", err)
 		} else {
 			log.Info("pipeline: check run updated", "conclusion", conclusion)
@@ -238,7 +296,7 @@ func (p *Pipeline) failCheck(ctx context.Context, token, owner, repo string, che
 		return
 	}
 	_ = p.app.UpdateCheckRun(ctx, token, owner, repo, checkRunID,
-		ConclusionFailure, "TASS scan error", reason)
+		ConclusionFailure, "TASS scan error", reason, "")
 }
 
 // ensureRepo upserts the installation and repository records into storage.

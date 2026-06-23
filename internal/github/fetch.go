@@ -217,6 +217,42 @@ func (a *App) FetchSourceFiles(
 	return result, nil
 }
 
+// FetchPRCommits returns the commit list for a pull request.
+// Uses GET /repos/{owner}/{repo}/pulls/{n}/commits (paginates up to 250 commits).
+// The result is converted to the lightweight CommitMeta slice used by DetectAI.
+func (a *App) FetchPRCommits(ctx context.Context, token, owner, repo string, prNumber int) ([]CommitMeta, error) {
+	var all []CommitListEntry
+	page := 1
+	for {
+		url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/commits?per_page=100&page=%d",
+			a.base(), owner, repo, prNumber, page)
+		var batch []CommitListEntry
+		if err := a.apiGet(ctx, token, url, &batch); err != nil {
+			return nil, fmt.Errorf("fetch PR commits page %d: %w", page, err)
+		}
+		all = append(all, batch...)
+		if len(batch) < 100 {
+			break
+		}
+		page++
+		if page > 3 { // cap at 300 commits — more than enough for any real PR
+			break
+		}
+	}
+
+	metas := make([]CommitMeta, 0, len(all))
+	for _, c := range all {
+		m := CommitMeta{
+			Message: c.Commit.Message,
+		}
+		if c.Author != nil {
+			m.AuthorLogin = c.Author.Login
+		}
+		metas = append(metas, m)
+	}
+	return metas, nil
+}
+
 // apiGet is a helper for authenticated GET requests that decode JSON into dest.
 func (a *App) apiGet(ctx context.Context, token, url string, dest any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

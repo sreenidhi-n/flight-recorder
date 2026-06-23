@@ -52,7 +52,9 @@ func (a *App) CreateCheckRun(ctx context.Context, token, owner, repo, headSHA st
 }
 
 // UpdateCheckRun marks the check run as completed with the given conclusion.
-func (a *App) UpdateCheckRun(ctx context.Context, token, owner, repo string, checkRunID int64, conclusion CheckConclusion, title, summary string) error {
+// detailsURL, if non-empty, is set as the check run's "Details" link on GitHub —
+// use this to point directly at the TASS verify page for the scan.
+func (a *App) UpdateCheckRun(ctx context.Context, token, owner, repo string, checkRunID int64, conclusion CheckConclusion, title, summary, detailsURL string) error {
 	payload := map[string]any{
 		"status":       "completed",
 		"conclusion":   string(conclusion),
@@ -61,6 +63,9 @@ func (a *App) UpdateCheckRun(ctx context.Context, token, owner, repo string, che
 			"title":   title,
 			"summary": summary,
 		},
+	}
+	if detailsURL != "" {
+		payload["details_url"] = detailsURL
 	}
 
 	url := fmt.Sprintf("%s/repos/%s/%s/check-runs/%d", a.base(), owner, repo, checkRunID)

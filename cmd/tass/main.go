@@ -53,6 +53,22 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		}
 		os.Exit(code)
+	case "verify-runtime":
+		code, err := runVerifyRuntime(os.Args[2:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		}
+		os.Exit(code)
+	case "spec":
+		if err := runSpec(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	case "validate-manifest":
+		if err := runValidateManifest(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "tass: unknown command %q\n", os.Args[1])
 		printUsage()
@@ -70,6 +86,9 @@ Commands:
   compliance  Generate SOC 2 / ISO 27001 / NIST 800-53 compliance report
   serve       Start the TASS web server (production)
   seed        Insert realistic demo data into the SQLite database
+  verify-runtime  Diff a log file against the manifest to detect runtime drift
+  spec        Print the implemented Capability Manifest Spec version
+  validate-manifest  Validate a tass.manifest.yaml or tass.contract.yaml against the schema
   version     Print version and exit
 
 Run 'tass <command> --help' for more information.

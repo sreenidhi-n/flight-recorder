@@ -1,0 +1,201 @@
+package templates
+
+// DocsPageData carries identity info into the layout (Docs is public, so these may be empty).
+type DocsPageData struct {
+	Login  string
+	Avatar string
+}
+
+// Docs is the onboarding 1-pager. Reachable from the topbar at /docs.
+templ Docs(d DocsPageData) {
+	@Page("Getting Started", d.Login, d.Avatar) {
+		<div class="page-header">
+			<h2>Getting started with TASS</h2>
+			<p style="color:var(--fg2);font-size:14px;margin-top:4px">
+				A 3-minute walkthrough — from install to first reviewed PR.
+			</p>
+		</div>
+
+		<div class="section-title">What TASS does</div>
+		<p style="margin:0 0 24px;line-height:1.6;color:var(--fg2)">
+			TASS watches every pull request for newly introduced <em>capabilities</em> — new
+			dependencies, outbound network calls, database writes, filesystem access, or privilege
+			patterns. New capabilities are diffed against a committed <code>tass.manifest.yaml</code>
+			and surfaced for explicit <strong>Confirm</strong> / <strong>Revert</strong> decisions
+			here. When every novel capability is decided, TASS commits the updated manifest to the
+			PR branch and turns the GitHub Check green.
+		</p>
+
+		<div class="section-title">1 · Install the GitHub App</div>
+		<p style="margin:0 0 12px;color:var(--fg2)">
+			Install on one repo to start. The App needs read access to PR contents and write
+			access for Checks, PR comments, and manifest commits.
+		</p>
+		<p style="margin:0 0 28px">
+			<a href="/auth/github" class="btn btn-primary" style="padding:8px 22px;font-size:14px;display:inline-block">
+				Sign in &amp; install →
+			</a>
+		</p>
+
+		<div class="section-title">2 · The first-run scan</div>
+		<p style="margin:0 0 24px;line-height:1.6;color:var(--fg2)">
+			On install, TASS scans the default branch and opens a <strong>setup PR</strong>
+			containing the initial <code>tass.manifest.yaml</code>. Merge it. From this point on,
+			every PR that introduces a new capability not in the manifest will trigger a review
+			card here.
+		</p>
+
+		<div class="section-title">3 · Reviewing a PR</div>
+		<div class="table-wrap" style="margin-bottom:28px">
+			<table>
+				<thead>
+					<tr>
+						<th style="width:60px">Step</th>
+						<th>What happens</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td style="font-family:var(--mono);color:var(--fg2)">1</td>
+						<td>Open a PR. TASS posts a comment listing novel capabilities and links to the verify page.</td>
+					</tr>
+					<tr>
+						<td style="font-family:var(--mono);color:var(--fg2)">2</td>
+						<td>Click <strong>Review →</strong> in the comment. Each capability gets a card with file location and code evidence.</td>
+					</tr>
+					<tr>
+						<td style="font-family:var(--mono);color:var(--fg2)">3</td>
+						<td>Hit <strong>Confirm</strong> or <strong>Revert</strong>. Decisions are RBAC-gated by your GitHub collaborator permission.</td>
+					</tr>
+					<tr>
+						<td style="font-family:var(--mono);color:var(--fg2)">4</td>
+						<td>When all caps are decided, TASS commits the updated manifest to the PR branch and the Check turns green.</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+
+		<div class="section-title">4 · Reviewing from GitHub (slash commands)</div>
+		<p style="margin:0 0 12px;color:var(--fg2);line-height:1.6">
+			Don't want to leave the PR? Decide capabilities directly from a PR comment. Capability
+			numbers (<code>1</code>, <code>2</code>, …) come from the TASS comment posted on the PR.
+		</p>
+		<div class="table-wrap" style="margin-bottom:12px">
+			<table>
+				<thead>
+					<tr>
+						<th style="width:42%">Command</th>
+						<th>What it does</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td style="font-family:var(--mono);font-size:12px">/tass confirm all</td>
+						<td>Confirm every novel capability on this PR.</td>
+					</tr>
+					<tr>
+						<td style="font-family:var(--mono);font-size:12px">/tass revert all</td>
+						<td>Revert every novel capability on this PR.</td>
+					</tr>
+					<tr>
+						<td style="font-family:var(--mono);font-size:12px">/tass confirm 1,2,3</td>
+						<td>Confirm specific capabilities by number.</td>
+					</tr>
+					<tr>
+						<td style="font-family:var(--mono);font-size:12px">/tass revert 4,5</td>
+						<td>Revert specific capabilities by number.</td>
+					</tr>
+					<tr>
+						<td style="font-family:var(--mono);font-size:12px">/tass confirm 1,2 revert 3</td>
+						<td>Combine confirms and reverts in a single comment.</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+		<p style="margin:0 0 28px;color:var(--fg2);font-size:13px;line-height:1.6">
+			<strong>Access:</strong> the comment author must have <em>Approver</em> role (GitHub
+			write permission) on the repository. Non-Approvers get a reply comment and the command
+			is discarded. Every slash-command decision is logged to the audit trail with the GitHub
+			actor's identity — same as decisions made in the web UI.
+		</p>
+
+		<div class="section-title">5 · Useful pages</div>
+		<div class="table-wrap" style="margin-bottom:28px">
+			<table>
+				<thead>
+					<tr>
+						<th>Page</th>
+						<th>What you'll find</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td><a href="/dashboard">/dashboard</a></td>
+						<td>Recent scans, per-developer override rates, capability-category breakdown.</td>
+					</tr>
+					<tr>
+						<td><a href="/graph">/graph</a></td>
+						<td>Cross-repo view of every confirmed capability. Filter by category, repo, date, or actor. CSV export.</td>
+					</tr>
+					<tr>
+						<td>/audit/:repo_id</td>
+						<td>Per-repo audit trail — decisions and manifest commits, tamper-evident hash chain. CSV export.</td>
+					</tr>
+					<tr>
+						<td>/compliance/:owner/:repo</td>
+						<td>Admin-only compliance report mapping confirmed capabilities to SOC 2 / ISO 27001 / NIST 800-53 controls. PDF, JSON, Markdown downloads.</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+
+		<div class="section-title">6 · CLI (optional)</div>
+		<p style="margin:0 0 12px;color:var(--fg2)">
+			Everything works without the CLI — but it's useful for local checks and air-gapped use.
+		</p>
+		<div class="table-wrap" style="margin-bottom:28px">
+			<table>
+				<thead>
+					<tr>
+						<th>Command</th>
+						<th>What it does</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td style="font-family:var(--mono);font-size:12px">tass init</td>
+						<td>Scan a repo and generate <code>tass.manifest.yaml</code> from scratch.</td>
+					</tr>
+					<tr>
+						<td style="font-family:var(--mono);font-size:12px">tass scan</td>
+						<td>Diff the working tree against the committed manifest — exits non-zero on drift.</td>
+					</tr>
+					<tr>
+						<td style="font-family:var(--mono);font-size:12px">tass verify-runtime</td>
+						<td>Diff VPC Flow Logs (or similar) against the manifest's network endpoints — catches runtime drift the static scan can't see.</td>
+					</tr>
+					<tr>
+						<td style="font-family:var(--mono);font-size:12px">tass validate-manifest</td>
+						<td>Validate a manifest file against the Capability Manifest Spec JSON schema.</td>
+					</tr>
+					<tr>
+						<td style="font-family:var(--mono);font-size:12px">tass spec --version</td>
+						<td>Print the Capability Manifest Spec version this build implements.</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+
+		<div class="section-title">Feedback</div>
+		<p style="margin:0 0 32px;color:var(--fg2);line-height:1.6">
+			This is an early v1 — rough edges expected. If something feels wrong or breaks, that's
+			the most useful thing you can tell us. Email
+			<a href="mailto:sreenidhin2002@gmail.com">sreenidhin2002@gmail.com</a> or open an issue
+			against the repo.
+		</p>
+
+		<div style="border-top:0.5px solid var(--border);padding-top:16px;margin-top:8px;font-size:12px;color:var(--fg2)">
+			<em>Machines state facts. Humans state intent.</em>
+		</div>
+	}
+}

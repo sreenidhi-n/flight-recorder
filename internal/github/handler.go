@@ -11,7 +11,6 @@ import (
 )
 
 // ScanRequest is handed off to a background worker when a PR event arrives.
-// Step 3.4 will implement the actual scan; for now we just log it.
 type ScanRequest struct {
 	InstallationID int64
 	RepoID         int64
@@ -21,6 +20,12 @@ type ScanRequest struct {
 	BaseSHA        string
 	HeadBranch     string
 	BaseBranch     string
+	// PRAuthorLogin is the GitHub login of the PR opener (pull_request.user.login).
+	// Used by the AI-signature detection heuristic.
+	PRAuthorLogin string
+	// PRLinesChanged is additions + deletions from the PR payload.
+	// Used as the velocity signal input in AI detection.
+	PRLinesChanged int
 }
 
 // ScanFunc is the callback invoked (in a goroutine) when a PR needs scanning.
@@ -142,6 +147,8 @@ func (h *Handler) handlePullRequest(ctx context.Context, body []byte, deliveryID
 		BaseSHA:        event.PullRequest.Base.SHA,
 		HeadBranch:     event.PullRequest.Head.Ref,
 		BaseBranch:     event.PullRequest.Base.Ref,
+		PRAuthorLogin:  event.PullRequest.User.Login,
+		PRLinesChanged: event.PullRequest.Additions + event.PullRequest.Deletions,
 	}
 	h.onScan(ctx, req)
 }

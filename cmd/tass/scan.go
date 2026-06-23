@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/tass-security/tass/internal/contract"
 	"github.com/tass-security/tass/internal/scanner"
 	"github.com/tass-security/tass/pkg/contracts"
 	"github.com/tass-security/tass/pkg/manifest"
@@ -86,6 +87,39 @@ func runScan(args []string) (int, error) {
 	}
 
 	novel := manifest.Diff(*cs, existing)
+
+	// --- Contract check ---
+	// Load tass.contract.yaml if it exists alongside the manifest.
+	var activeContract *contract.Contract
+	contractPath := filepath.Join(repoRoot, "tass.contract.yaml")
+	if contractBytes, rerr := os.ReadFile(contractPath); rerr == nil {
+		if activeContract, rerr = contract.Load(contractBytes); rerr != nil {
+			color.Yellow("  warning: tass.contract.yaml is invalid (%v) — contract check skipped", rerr)
+			activeContract = nil
+		}
+	}
+
+	var contractViolations []contract.Violation
+	if activeContract != nil && len(novel) > 0 {
+		contractViolations = activeContract.Check(novel)
+		if len(contractViolations) > 0 {
+			violated := color.New(color.FgRed, color.Bold).SprintfFunc()
+			fmt.Printf("\n%s\n\n", violated("🚫 TASS contract violations — %d hard %s",
+				len(contractViolations), plural(len(contractViolations), "block", "blocks")))
+			for _, v := range contractViolations {
+				capName := v.Reason
+				if v.Capability.Name != "" {
+					capName = fmt.Sprintf("%-40s", v.Capability.Name)
+				}
+				fmt.Printf("  🚫 [%s]  %s\n", v.Rule, capName)
+				fmt.Printf("     %s\n\n", color.New(color.Faint).Sprint(v.Reason))
+			}
+			fmt.Println("These cannot be confirmed or reverted. Edit tass.contract.yaml to allow them,")
+			fmt.Println("or remove the offending code from this branch.")
+			fmt.Println()
+			return 2, nil // exit 2 = contract violation (distinct from exit 1 = needs review)
+		}
+	}
 
 	if len(novel) == 0 {
 		switch *format {

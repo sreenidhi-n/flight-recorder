@@ -63,7 +63,7 @@ func Page(title, login, avatar string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, " — TASS</title><link rel=\"stylesheet\" href=\"/static/style.css\"><script src=\"https://unpkg.com/htmx.org@2.0.4\" defer></script></head><body><header class=\"topbar\"><a class=\"topbar-brand\" href=\"/\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"11\" cy=\"11\" r=\"8\"></circle> <path d=\"M21 21l-4.35-4.35\"></path></svg> <span>TASS</span></a><div class=\"topbar-right\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, " — TASS</title><link rel=\"stylesheet\" href=\"/static/style.css\"><script src=\"https://unpkg.com/htmx.org@2.0.4\" defer></script></head><body><header class=\"topbar\"><a class=\"topbar-brand\" href=\"/\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"11\" cy=\"11\" r=\"8\"></circle> <path d=\"M21 21l-4.35-4.35\"></path></svg> <span>TASS</span></a><div class=\"topbar-right\"><a href=\"/docs\">Docs</a> ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -75,7 +75,7 @@ func Page(title, login, avatar string) templ.Component {
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(userInitials(login))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/layout.templ`, Line: 46, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/layout.templ`, Line: 47, Col: 47}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -88,7 +88,7 @@ func Page(title, login, avatar string) templ.Component {
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs("@" + login)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/layout.templ`, Line: 47, Col: 25}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/ui/templates/layout.templ`, Line: 48, Col: 25}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
