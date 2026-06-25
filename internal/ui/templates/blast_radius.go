@@ -44,6 +44,8 @@ func categoryColor(cat string) string {
 		return "#7c3aed"
 	case "network_access", "external_api":
 		return "#2563eb"
+	case "llm_execution":
+		return "#0E9981"
 	case "database_operation":
 		return "#d97706"
 	case "filesystem_operation":

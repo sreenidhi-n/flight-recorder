@@ -80,13 +80,21 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 		return
 	}
 
-	// --- 2. Create check run immediately (shows "in progress" on the PR) ---
+	// --- 2. Create both check runs immediately (shows "in progress" on the PR) ---
 	checkRunID, err := p.app.CreateCheckRun(ctx, token, owner, repo, req.HeadSHA)
 	if err != nil {
 		log.Error("pipeline: create check run", "error", err)
 		// Non-fatal — continue the scan even if GitHub check fails
 	} else {
 		log.Info("pipeline: check run created", "check_run_id", checkRunID)
+	}
+
+	redTeamCheckRunID, err := p.app.CreateRedTeamCheckRun(ctx, token, owner, repo, req.HeadSHA)
+	if err != nil {
+		log.Error("pipeline: create red-team check run", "error", err)
+		// Non-fatal — continue the scan
+	} else {
+		log.Info("pipeline: red-team check run created", "check_run_id", redTeamCheckRunID)
 	}
 
 	// --- 3. Fetch changed file list ---
@@ -205,6 +213,24 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 		}
 	}
 
+	// --- 9c. Fuzz-presence check (Ironclad Phase 3) ---
+	// For each novel CatDatabaseOp, CatExternalAPI, or CatLLMExecution capability,
+	// verify that the adjacent _test.go file on the head branch has a FuzzX function.
+	// AP-3: FetchFileContent returns (nil,nil) for absent files — we treat that as
+	// RequiresFuzzing=true. Operational fetch errors are non-fatal (logged, skipped).
+	novelCaps = CheckFuzzPresence(ctx, p.app, token, owner, repo, req.HeadSHA, novelCaps)
+
+	// Collect capabilities that need fuzz tests for the red-team check run.
+	var unfuzzedCaps []contracts.Capability
+	for _, cap := range novelCaps {
+		if cap.RequiresFuzzing {
+			unfuzzedCaps = append(unfuzzedCaps, cap)
+		}
+	}
+	if len(unfuzzedCaps) > 0 {
+		log.Info("pipeline: fuzz coverage gaps detected", "unfuzzed_count", len(unfuzzedCaps))
+	}
+
 	// --- 10. Build scan ID and store result ---
 	scanID := fmt.Sprintf("scan-%s-%d-%s", sanitize(req.RepoFullName), req.PRNumber, req.HeadSHA[:8])
 	durationMS := time.Since(start).Milliseconds()
@@ -256,6 +282,20 @@ func (p *Pipeline) Run(ctx context.Context, req ScanRequest) {
 			log.Error("pipeline: update check run", "error", err)
 		} else {
 			log.Info("pipeline: check run updated", "conclusion", conclusion)
+		}
+	}
+
+	// --- 12b. Update red-team check run ---
+	// action_required if any novel capabilities lack fuzz tests; success otherwise.
+	if redTeamCheckRunID != 0 {
+		if err := p.app.UpdateRedTeamCheckRun(ctx, token, owner, repo, redTeamCheckRunID, unfuzzedCaps); err != nil {
+			log.Error("pipeline: update red-team check run", "error", err)
+		} else {
+			rtConclusion := "success"
+			if len(unfuzzedCaps) > 0 {
+				rtConclusion = "action_required"
+			}
+			log.Info("pipeline: red-team check run updated", "conclusion", rtConclusion)
 		}
 	}
 

@@ -60,7 +60,7 @@ func GenerateMitigationData(v contract.Violation) MitigationData {
 			Snippet:  render(templates.NetworkPolicy, ctx),
 			Ctx:      ctx,
 		}
-	case contracts.CatExternalAPI:
+	case contracts.CatExternalAPI, contracts.CatLLMExecution:
 		return MitigationData{
 			Heading:  "AWS IAM Policy — least-privilege external API access",
 			Language: "json",
@@ -114,7 +114,7 @@ func GenerateMitigation(v contract.Violation) string {
 		fence = "yaml"
 		heading = "Kubernetes NetworkPolicy — restrict egress"
 
-	case contracts.CatExternalAPI:
+	case contracts.CatExternalAPI, contracts.CatLLMExecution:
 		snippet = render(templates.IAMPolicy, ctx)
 		fence = "json"
 		heading = "AWS IAM Policy — least-privilege external API access"

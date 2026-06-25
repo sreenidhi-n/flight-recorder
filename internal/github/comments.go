@@ -119,6 +119,38 @@ func RenderComment(scanID string, novelCaps []contracts.Capability, violations [
 		fmt.Fprintf(&b, "\n")
 	}
 
+	// --- Fuzz-required section (Ironclad Phase 3 Red-Teaming) ---
+	// Render a blocking warning for any capabilities that lack fuzz tests.
+	var fuzzRequiredCaps []contracts.Capability
+	for _, cap := range novelCaps {
+		if cap.RequiresFuzzing {
+			fuzzRequiredCaps = append(fuzzRequiredCaps, cap)
+		}
+	}
+	if len(fuzzRequiredCaps) > 0 {
+		plural := "capability"
+		if len(fuzzRequiredCaps) > 1 {
+			plural = "capabilities"
+		}
+		fmt.Fprintf(&b, "## 🧪 TASS — %d %s require fuzz tests\n\n", len(fuzzRequiredCaps), plural)
+		fmt.Fprintf(&b, "> ⚠️ **The \"TASS: Dynamic Red-Team\" check is blocking this PR.**\n")
+		fmt.Fprintf(&b, "> High-risk capabilities were detected without a corresponding `FuzzX` function in the adjacent `_test.go` file.\n")
+		fmt.Fprintf(&b, "> Add fuzz tests and re-push to clear this block.\n\n")
+		fmt.Fprintf(&b, "| Capability | Category | Location |\n")
+		fmt.Fprintf(&b, "|---|---|---|\n")
+		for _, cap := range fuzzRequiredCaps {
+			loc := cap.Location.File
+			if cap.Location.Line > 0 {
+				loc = fmt.Sprintf("%s:%d", cap.Location.File, cap.Location.Line)
+			}
+			fmt.Fprintf(&b, "| %s %s | `%s` | `%s` |\n",
+				categoryEmoji(cap.Category), cap.Name,
+				formatCategory(cap.Category), loc,
+			)
+		}
+		fmt.Fprintf(&b, "\n")
+	}
+
 	// --- Regular capabilities section ---
 	// Count non-violated novel caps (those that need human review)
 	var reviewableCaps []contracts.Capability
@@ -194,6 +226,8 @@ func categoryEmoji(cat contracts.CapCategory) string {
 		return "📁"
 	case contracts.CatPrivilege:
 		return "🔐"
+	case contracts.CatLLMExecution:
+		return "🤖"
 	default:
 		return "⚡"
 	}
@@ -213,6 +247,8 @@ func formatCategory(cat contracts.CapCategory) string {
 		return "Filesystem"
 	case contracts.CatPrivilege:
 		return "Privilege"
+	case contracts.CatLLMExecution:
+		return "LLM Execution"
 	default:
 		return string(cat)
 	}

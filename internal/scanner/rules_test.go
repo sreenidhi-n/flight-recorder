@@ -63,6 +63,7 @@ func TestLoadRules_MetaValid(t *testing.T) {
 		contracts.CatExternalDep:  true,
 		contracts.CatExternalAPI:  true,
 		contracts.CatPrivilege:    true,
+		contracts.CatLLMExecution: true,
 	}
 
 	for lang, langRules := range rules {

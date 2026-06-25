@@ -199,6 +199,10 @@ a:hover { text-decoration: underline; }
 .cap-badge.db   { background: var(--orange-bg); color: var(--orange-fg); }
 .cap-badge.fs   { background: var(--green-bg);  color: var(--green-fg);  }
 .cap-badge.priv { background: var(--red-bg);    color: var(--red-fg);    }
+.cap-badge.llm  { background: #E6F4F1;          color: #0E6655;          }
+@media (prefers-color-scheme: dark) {
+  .cap-badge.llm { background: #0B3A33; color: #7EDDD0; }
+}
 
 .cap-name {
   font-size:     15px;

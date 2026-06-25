@@ -266,8 +266,10 @@ func TestPhase3_FullFlow(t *testing.T) {
 	gotCheckCreate := mock.checkRunCreated
 	gotCommentCreate := mock.commentCreated
 	mock.mu.Unlock()
-	if gotCheckCreate != 1 {
-		t.Errorf("check run created: want 1, got %d", gotCheckCreate)
+	// Phase 3 creates two check runs: the main TASS scan check and the
+	// "TASS: Dynamic Red-Team" fuzz-coverage check.
+	if gotCheckCreate != 2 {
+		t.Errorf("check run created: want 2 (main + red-team), got %d", gotCheckCreate)
 	}
 	if gotCommentCreate != 1 {
 		t.Errorf("PR comment created: want 1, got %d", gotCommentCreate)

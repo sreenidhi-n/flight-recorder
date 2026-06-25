@@ -15,6 +15,10 @@ const (
 	CatNetworkAccess CapCategory = "network_access"
 	CatFileSystem    CapCategory = "filesystem_operation"
 	CatPrivilege     CapCategory = "privilege_pattern"
+	// CatLLMExecution flags HTTP calls or SDK usage that directly targets a
+	// known large-language-model provider API (OpenAI, Anthropic, Gemini, etc.).
+	// These receive stricter review and block the PR if fuzz tests are absent.
+	CatLLMExecution  CapCategory = "llm_execution"
 )
 
 // DetectionLayer identifies which scanner layer produced a capability.
@@ -53,6 +57,12 @@ type Capability struct {
 	// via slash commands; only by updating tass.contract.yaml itself.
 	ContractViolated        bool   `json:"contract_violated,omitempty" yaml:"contract_violated,omitempty"`
 	ContractViolationReason string `json:"contract_violation_reason,omitempty" yaml:"contract_violation_reason,omitempty"`
+
+	// RequiresFuzzing is set by the pipeline's fuzz-presence check when this
+	// capability's category (database_operation, external_api, llm_execution)
+	// lacks a corresponding FuzzX function in the adjacent _test.go file.
+	// When true, the "TASS: Dynamic Red-Team" Check Run blocks the PR.
+	RequiresFuzzing bool `json:"requires_fuzzing,omitempty" yaml:"requires_fuzzing,omitempty"`
 }
 
 // CapabilitySet is the complete output of a scan run.

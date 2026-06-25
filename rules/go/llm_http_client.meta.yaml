@@ -1,0 +1,6 @@
+category: llm_execution
+name: "LLM provider API HTTP call"
+confidence: 0.95
+# cap_id prefix — final ID: ast:go:llm:http:{method}
+cap_id: "llm:http"
+symbol_capture: "method"

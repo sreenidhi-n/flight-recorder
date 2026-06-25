@@ -221,6 +221,8 @@ func graphCapBadgeClass(cat string) string {
 		return "fs"
 	case "privilege_pattern":
 		return "priv"
+	case "llm_execution":
+		return "llm"
 	default:
 		return "net"
 	}
@@ -240,6 +242,8 @@ func graphCapLabel(cat string) string {
 		return "Filesystem"
 	case "privilege_pattern":
 		return "Privilege"
+	case "llm_execution":
+		return "LLM Execution"
 	default:
 		return cat
 	}
@@ -345,7 +349,7 @@ templ Graph(d GraphPageData) {
 				// Category checkboxes
 				<div>
 					<div style="font-size:12px;font-weight:600;color:var(--fg2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em">Category</div>
-					for _, cat := range []string{"external_dependency","network_access","database_operation","filesystem_operation","privilege_pattern","external_api"} {
+					for _, cat := range []string{"external_dependency","network_access","database_operation","filesystem_operation","privilege_pattern","external_api","llm_execution"} {
 						<label style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:pointer;font-size:13px">
 							<input
 								type="checkbox"
@@ -701,7 +705,7 @@ templ BlastRadiusView(d GraphPageData) {
 
 				// Legend
 				<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:16px;padding-top:12px;border-top:0.5px solid var(--border)">
-					for _, cat := range []string{"external_dependency","network_access","database_operation","filesystem_operation","privilege_pattern","external_api"} {
+					for _, cat := range []string{"external_dependency","network_access","database_operation","filesystem_operation","privilege_pattern","external_api","llm_execution"} {
 						<span style="display:flex;align-items:center;gap:4px;font-size:11px">
 							<span style={ "width:10px;height:10px;border-radius:50%;display:inline-block;background:" + categoryColor(cat) }></span>
 							{ graphCapLabel(cat) }
